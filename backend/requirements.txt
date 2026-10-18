@@ -31,3 +31,9 @@ motor
 # Data validation
 pydantic
 typing-extensions
+
+# backend/requirements.txt
+# ... (existing dependencies) ...
+
+# GitHub API integration
+httpx

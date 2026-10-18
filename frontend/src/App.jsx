@@ -8,8 +8,9 @@ import ColdEmail from './components/ColdEmail';
 import VideoCoach from './components/VideoCoach';
 import Profile from './components/Profile';
 import AutoPilot from './components/Autopilot';
+import RepoAnalyzer from './components/RepoAnalyzer';
+import DevOpsGenerator from './components/DevOpsGenerator';
 import { AppProvider } from './context/AppContext';
-
 
 const App = () => {
   return (
@@ -26,6 +27,8 @@ const App = () => {
               <Route path="/video" element={<VideoCoach />} />
               <Route path="/profile" element={<Profile />} />
               <Route path="/autopilot" element={<AutoPilot />} />
+              <Route path="/repo-analyzer" element={<RepoAnalyzer />} />
+              <Route path="/devops-generator" element={<DevOpsGenerator />} />
             </Routes>
           </main>
         </div>

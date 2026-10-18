@@ -27,7 +27,7 @@ class InterviewCrew:
             api_key=os.getenv("GROQ_API_KEY"),
             temperature=0.2,
             timeout=60,
-            additional_params={"num_retries": 3}
+            # additional_params={"num_retries": 3}
         )
 
     def kickoff(self, inputs):

@@ -1,0 +1,4341 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+backend/
+  agents/
+    config/
+      agents.yaml
+      resume_agents.yaml
+      resume_tasks.yaml
+      tasks.yaml
+    email_crew.py
+    hunter_crew.py
+    interview_crew.py
+    resume_crew.py
+    reviewer_crew.py
+    video_crew.py
+  app/
+    career_agent.db
+    database.py
+    dependencies.py
+    main.py
+    profile_store.py
+    utils.py
+  graph/
+    nodes.py
+    state.py
+    workflows.py
+  tools/
+    __init__.py
+    tavily_search.py
+  requirements.txt
+frontend/
+  public/
+    vite.svg
+  src/
+    assets/
+      react.svg
+    components/
+      Autopilot.jsx
+      ColdEmail.jsx
+      InterviewPrep.jsx
+      JobDashboard.jsx
+      Profile.jsx
+      ResumeOptimizer.jsx
+      Sidebar.jsx
+      VideoCoach.jsx
+    context/
+      AppContext.jsx
+    App.css
+    App.jsx
+    index.css
+    main.jsx
+  .gitignore
+  eslint.config.js
+  index.html
+  package.json
+  postcss.config.js
+  README.md
+  tailwind.config.js
+  vite.config.js
+.gitignore
+README.md
+Structure
+test.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="backend/agents/config/agents.yaml">
+job_hunter_agent:
+  role: >
+    Senior Technical Talent Scout
+  goal: >
+    Find the most relevant {job_title} roles that match the user's skill set: {skills}.
+  backstory: >
+    You are an expert at navigating job boards. 
+    IMPORTANT: You ONLY use the tools provided to you (tavily_search). 
+    Do NOT attempt to use 'brave_search', 'google_search', or any other tool.
+    If you cannot find jobs, simply return an empty list.
+    
+
+#company_verifier_agent:
+#  role: >
+#    Corporate Integrity Investigator
+#  goal: >
+#    Verify the legitimacy of companies found.
+#  backstory: >
+#    You are skeptical and thorough.
+</file>
+
+<file path="backend/agents/config/resume_agents.yaml">
+ats_specialist:
+  role: >
+    Senior ATS Resume Optimizer
+  goal: >
+    Analyze a resume against a job description to calculate an ATS match score 
+    and provide actionable improvements.
+  backstory: >
+    You are a former recruiter who knows exactly how Applicant Tracking Systems (ATS) work.
+    You are strict about keyword matching. If a resume is missing key skills mentioned 
+    in the job description, you flag it immediately. You believe in "Show, Don't Tell" 
+    and quantifiable achievements.
+</file>
+
+<file path="backend/agents/config/resume_tasks.yaml">
+analysis_task:
+  description: >
+    1. Read the provided Resume Text.
+    2. Read the provided Job Description (JD).
+    3. Identify every hard skill and tool mentioned in the JD.
+    4. Check if those skills exist in the Resume Text.
+    5. Calculate an ATS Score (0-100) based on the percentage of matching keywords.
+    6. Rewrite 3 bullet points from the resume to naturally include the missing keywords.
+    
+    Resume Text: {resume_text}
+    Job Description: {job_description}
+  expected_output: >
+    A structured analysis containing the score, missing keywords, and rewritten bullet points.
+  agent: ats_specialist
+</file>
+
+<file path="backend/agents/config/tasks.yaml">
+# backend/agents/config/tasks.yaml
+
+job_search_task:
+  description: >
+    Search for 5-10 active job listings for {job_title}. 
+    Focus on these specific requirements: {skills}.
+    Identify the company name, location, and application link.
+  expected_output: >
+    A list of dictionaries containing 'company', 'role', 'link', and 'summary'.
+  agent: job_hunter_agent
+
+#verification_task:
+#  description: >
+#    Research the companies identified in the search task.
+#    Check for legitimacy and recent employee feedback.
+#  expected_output: >
+#    A verified list of jobs with a 'legitimacy_score' (1-10) and a
+#    'pros_cons' summary for each company.
+#  agent: company_verifier_agent
+</file>
+
+<file path="backend/agents/reviewer_crew.py">
+
+</file>
+
+<file path="backend/app/dependencies.py">
+
+</file>
+
+<file path="backend/app/profile_store.py">
+"""
+Profile store — Task 1 of the orchestration work.
+
+Keeps one resume per user (keyed by email, since the app has no real auth
+yet) so every other module can pull the resume instead of asking the user
+to re-upload a PDF each time.
+
+Uses plain sqlite3 from the standard library — no new dependency, no
+server to run, and it's a five-minute swap to Mongo/Postgres later if the
+app grows real user accounts.
+"""
+import sqlite3
+import os
+from datetime import datetime, timezone
+from contextlib import contextmanager
+
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "career_agent.db")
+
+
+@contextmanager
+def _get_conn():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def init_db():
+    """Create the profiles table if it doesn't exist yet. Call once on startup."""
+    with _get_conn() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS profiles (
+                email TEXT PRIMARY KEY,
+                resume_text TEXT NOT NULL DEFAULT '',
+                filename TEXT,
+                updated_at TEXT NOT NULL
+            )
+        """)
+
+
+def get_profile(email: str) -> dict | None:
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT email, resume_text, filename, updated_at FROM profiles WHERE email = ?",
+            (email,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def upsert_profile(email: str, resume_text: str, filename: str | None = None) -> dict:
+    """
+    Creates the profile if it doesn't exist yet, otherwise overwrites it.
+    `filename` is only updated when a new one is given (e.g. editing the
+    text by hand shouldn't erase the record of which PDF it came from).
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    with _get_conn() as conn:
+        existing = conn.execute("SELECT filename FROM profiles WHERE email = ?", (email,)).fetchone()
+        final_filename = filename if filename is not None else (existing["filename"] if existing else None)
+        conn.execute("""
+            INSERT INTO profiles (email, resume_text, filename, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(email) DO UPDATE SET
+                resume_text = excluded.resume_text,
+                filename = excluded.filename,
+                updated_at = excluded.updated_at
+        """, (email, resume_text, final_filename, now))
+    return get_profile(email)
+
+
+def delete_profile(email: str) -> bool:
+    with _get_conn() as conn:
+        cur = conn.execute("DELETE FROM profiles WHERE email = ?", (email,))
+        return cur.rowcount > 0
+</file>
+
+<file path="backend/app/utils.py">
+"""
+Small helpers shared between the FastAPI routes (main.py) and the LangGraph
+pipeline (graph/nodes.py). Pulled out on their own so graph/nodes.py can
+reuse them without importing main.py (which would create a circular import,
+since main.py also needs to import the graph module to expose it as a route).
+"""
+import io
+import json
+import ast
+from PyPDF2 import PdfReader
+
+
+def is_rate_limit_error(exc: Exception) -> bool:
+    """
+    Best-effort detection of a rate-limit error coming back from
+    Groq/litellm/instructor. These libraries wrap the underlying HTTP
+    error in different exception classes depending on which layer catches
+    it first (litellm.RateLimitError, instructor.InstructorRetryException,
+    etc.), so checking the error text is more reliable than checking a
+    specific exception type.
+    """
+    text = str(exc).lower()
+    return "rate limit" in text or "ratelimiterror" in text or " 429" in text or "429 " in text
+
+
+def parse_agent_output(output):
+    """
+    Converts a CrewAI TaskOutput (which might be a Pydantic model, JSON
+    string, or Python-literal string) into a plain dict/list for JSON
+    responses.
+    """
+    # 1. If it's already a Pydantic object, dump it
+    if hasattr(output, 'pydantic') and output.pydantic:
+        return output.pydantic.model_dump()
+
+    # 2. Get the raw string content
+    content = output.raw if hasattr(output, 'raw') else str(output)
+
+    # 3. Try parsing as standard JSON
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        pass
+
+    # 4. Try parsing as a Python literal (handles single-quoted dicts)
+    try:
+        return ast.literal_eval(content)
+    except (ValueError, SyntaxError):
+        pass
+
+    # 5. Fallback: return the raw string wrapped in a dict
+    return {"raw_output": content}
+
+
+def extract_text_from_pdf(content: bytes) -> str:
+    """
+    Extracts all text from a PDF's raw bytes.
+    Guards against pages that return None (e.g. scanned/image-only pages),
+    which previously crashed the app with a TypeError on string concatenation.
+    """
+    pdf_reader = PdfReader(io.BytesIO(content))
+    resume_text = ""
+    for page in pdf_reader.pages:
+        resume_text += page.extract_text() or ""
+    return resume_text
+</file>
+
+<file path="backend/tools/__init__.py">
+
+</file>
+
+<file path="frontend/public/vite.svg">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" role="img" class="iconify iconify--logos" width="31.88" height="32" preserveAspectRatio="xMidYMid meet" viewBox="0 0 256 257"><defs><linearGradient id="IconifyId1813088fe1fbc01fb466" x1="-.828%" x2="57.636%" y1="7.652%" y2="78.411%"><stop offset="0%" stop-color="#41D1FF"></stop><stop offset="100%" stop-color="#BD34FE"></stop></linearGradient><linearGradient id="IconifyId1813088fe1fbc01fb467" x1="43.376%" x2="50.316%" y1="2.242%" y2="89.03%"><stop offset="0%" stop-color="#FFEA83"></stop><stop offset="8.333%" stop-color="#FFDD35"></stop><stop offset="100%" stop-color="#FFA800"></stop></linearGradient></defs><path fill="url(#IconifyId1813088fe1fbc01fb466)" d="M255.153 37.938L134.897 252.976c-2.483 4.44-8.862 4.466-11.382.048L.875 37.958c-2.746-4.814 1.371-10.646 6.827-9.67l120.385 21.517a6.537 6.537 0 0 0 2.322-.004l117.867-21.483c5.438-.991 9.574 4.796 6.877 9.62Z"></path><path fill="url(#IconifyId1813088fe1fbc01fb467)" d="M185.432.063L96.44 17.501a3.268 3.268 0 0 0-2.634 3.014l-5.474 92.456a3.268 3.268 0 0 0 3.997 3.378l24.777-5.718c2.318-.535 4.413 1.507 3.936 3.838l-7.361 36.047c-.495 2.426 1.782 4.5 4.151 3.78l15.304-4.649c2.372-.72 4.652 1.36 4.15 3.788l-11.698 56.621c-.732 3.542 3.979 5.473 5.943 2.437l1.313-2.028l72.516-144.72c1.215-2.423-.88-5.186-3.54-4.672l-25.505 4.922c-2.396.462-4.435-1.77-3.759-4.114l16.646-57.705c.677-2.35-1.37-4.583-3.769-4.113Z"></path></svg>
+</file>
+
+<file path="frontend/src/assets/react.svg">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" role="img" class="iconify iconify--logos" width="35.93" height="32" preserveAspectRatio="xMidYMid meet" viewBox="0 0 256 228"><path fill="#00D8FF" d="M210.483 73.824a171.49 171.49 0 0 0-8.24-2.597c.465-1.9.893-3.777 1.273-5.621c6.238-30.281 2.16-54.676-11.769-62.708c-13.355-7.7-35.196.329-57.254 19.526a171.23 171.23 0 0 0-6.375 5.848a155.866 155.866 0 0 0-4.241-3.917C100.759 3.829 77.587-4.822 63.673 3.233C50.33 10.957 46.379 33.89 51.995 62.588a170.974 170.974 0 0 0 1.892 8.48c-3.28.932-6.445 1.924-9.474 2.98C17.309 83.498 0 98.307 0 113.668c0 15.865 18.582 31.778 46.812 41.427a145.52 145.52 0 0 0 6.921 2.165a167.467 167.467 0 0 0-2.01 9.138c-5.354 28.2-1.173 50.591 12.134 58.266c13.744 7.926 36.812-.22 59.273-19.855a145.567 145.567 0 0 0 5.342-4.923a168.064 168.064 0 0 0 6.92 6.314c21.758 18.722 43.246 26.282 56.54 18.586c13.731-7.949 18.194-32.003 12.4-61.268a145.016 145.016 0 0 0-1.535-6.842c1.62-.48 3.21-.974 4.76-1.488c29.348-9.723 48.443-25.443 48.443-41.52c0-15.417-17.868-30.326-45.517-39.844Zm-6.365 70.984c-1.4.463-2.836.91-4.3 1.345c-3.24-10.257-7.612-21.163-12.963-32.432c5.106-11 9.31-21.767 12.459-31.957c2.619.758 5.16 1.557 7.61 2.4c23.69 8.156 38.14 20.213 38.14 29.504c0 9.896-15.606 22.743-40.946 31.14Zm-10.514 20.834c2.562 12.94 2.927 24.64 1.23 33.787c-1.524 8.219-4.59 13.698-8.382 15.893c-8.067 4.67-25.32-1.4-43.927-17.412a156.726 156.726 0 0 1-6.437-5.87c7.214-7.889 14.423-17.06 21.459-27.246c12.376-1.098 24.068-2.894 34.671-5.345a134.17 134.17 0 0 1 1.386 6.193ZM87.276 214.515c-7.882 2.783-14.16 2.863-17.955.675c-8.075-4.657-11.432-22.636-6.853-46.752a156.923 156.923 0 0 1 1.869-8.499c10.486 2.32 22.093 3.988 34.498 4.994c7.084 9.967 14.501 19.128 21.976 27.15a134.668 134.668 0 0 1-4.877 4.492c-9.933 8.682-19.886 14.842-28.658 17.94ZM50.35 144.747c-12.483-4.267-22.792-9.812-29.858-15.863c-6.35-5.437-9.555-10.836-9.555-15.216c0-9.322 13.897-21.212 37.076-29.293c2.813-.98 5.757-1.905 8.812-2.773c3.204 10.42 7.406 21.315 12.477 32.332c-5.137 11.18-9.399 22.249-12.634 32.792a134.718 134.718 0 0 1-6.318-1.979Zm12.378-84.26c-4.811-24.587-1.616-43.134 6.425-47.789c8.564-4.958 27.502 2.111 47.463 19.835a144.318 144.318 0 0 1 3.841 3.545c-7.438 7.987-14.787 17.08-21.808 26.988c-12.04 1.116-23.565 2.908-34.161 5.309a160.342 160.342 0 0 1-1.76-7.887Zm110.427 27.268a347.8 347.8 0 0 0-7.785-12.803c8.168 1.033 15.994 2.404 23.343 4.08c-2.206 7.072-4.956 14.465-8.193 22.045a381.151 381.151 0 0 0-7.365-13.322Zm-45.032-43.861c5.044 5.465 10.096 11.566 15.065 18.186a322.04 322.04 0 0 0-30.257-.006c4.974-6.559 10.069-12.652 15.192-18.18ZM82.802 87.83a323.167 323.167 0 0 0-7.227 13.238c-3.184-7.553-5.909-14.98-8.134-22.152c7.304-1.634 15.093-2.97 23.209-3.984a321.524 321.524 0 0 0-7.848 12.897Zm8.081 65.352c-8.385-.936-16.291-2.203-23.593-3.793c2.26-7.3 5.045-14.885 8.298-22.6a321.187 321.187 0 0 0 7.257 13.246c2.594 4.48 5.28 8.868 8.038 13.147Zm37.542 31.03c-5.184-5.592-10.354-11.779-15.403-18.433c4.902.192 9.899.29 14.978.29c5.218 0 10.376-.117 15.453-.343c-4.985 6.774-10.018 12.97-15.028 18.486Zm52.198-57.817c3.422 7.8 6.306 15.345 8.596 22.52c-7.422 1.694-15.436 3.058-23.88 4.071a382.417 382.417 0 0 0 7.859-13.026a347.403 347.403 0 0 0 7.425-13.565Zm-16.898 8.101a358.557 358.557 0 0 1-12.281 19.815a329.4 329.4 0 0 1-23.444.823c-7.967 0-15.716-.248-23.178-.732a310.202 310.202 0 0 1-12.513-19.846h.001a307.41 307.41 0 0 1-10.923-20.627a310.278 310.278 0 0 1 10.89-20.637l-.001.001a307.318 307.318 0 0 1 12.413-19.761c7.613-.576 15.42-.876 23.31-.876H128c7.926 0 15.743.303 23.354.883a329.357 329.357 0 0 1 12.335 19.695a358.489 358.489 0 0 1 11.036 20.54a329.472 329.472 0 0 1-11 20.722Zm22.56-122.124c8.572 4.944 11.906 24.881 6.52 51.026c-.344 1.668-.73 3.367-1.15 5.09c-10.622-2.452-22.155-4.275-34.23-5.408c-7.034-10.017-14.323-19.124-21.64-27.008a160.789 160.789 0 0 1 5.888-5.4c18.9-16.447 36.564-22.941 44.612-18.3ZM128 90.808c12.625 0 22.86 10.235 22.86 22.86s-10.235 22.86-22.86 22.86s-22.86-10.235-22.86-22.86s10.235-22.86 22.86-22.86Z"></path></svg>
+</file>
+
+<file path="frontend/src/components/Autopilot.jsx">
+import React, { useState } from 'react';
+import axios from 'axios';
+import {
+  Rocket, Loader2, AlertCircle, CheckCircle2, Briefcase, FileText,
+  MessageSquare, Mail, Building, ExternalLink
+} from 'lucide-react';
+import { motion } from 'framer-motion';
+import { useApp, API_BASE } from '../context/AppContext';
+
+/**
+ * Task 4 — runs the whole graph/workflows.py pipeline (profile -> job
+ * search/match -> resume analysis -> interview prep -> cold email) in one
+ * call, instead of clicking through five separate modules by hand.
+ *
+ * If a job was already picked in Job Hunter (selectedJob in context, the
+ * "job context bridge" from Task 2), this skips straight to matching
+ * against that job. Otherwise it searches fresh from the typed job title.
+ */
+const Stage = ({ icon: Icon, title, done, children }) => (
+  <div className={`rounded-2xl border p-6 transition-all ${done ? 'border-cyan-500/30 bg-slate-900/80' : 'border-slate-800 bg-slate-900/40'}`}>
+    <div className="flex items-center gap-3 mb-4">
+      <div className={`p-2 rounded-lg ${done ? 'bg-cyan-500/10 text-cyan-400' : 'bg-slate-800 text-slate-600'}`}>
+        <Icon className="w-5 h-5" />
+      </div>
+      <h3 className={`font-bold ${done ? 'text-slate-100' : 'text-slate-600'}`}>{title}</h3>
+      {done && <CheckCircle2 className="w-4 h-4 text-emerald-400 ml-auto" />}
+    </div>
+    {done ? children : <p className="text-sm text-slate-600">Not reached yet.</p>}
+  </div>
+);
+
+const AutoPilot = () => {
+  const { email, hasResume, selectedJob, setSelectedJob } = useApp();
+  const [jobTitle, setJobTitle] = useState('');
+  const [skills, setSkills] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState('');
+
+  const canRun = email && (selectedJob || jobTitle.trim());
+
+  const handleRun = async () => {
+    if (!canRun) return;
+    setLoading(true);
+    setError('');
+    setResult(null);
+
+    try {
+      const payload = {
+        email,
+        job_title: selectedJob ? null : jobTitle.trim(),
+        skills: skills.trim() ? skills.trim() : null,
+        selected_job: selectedJob || null,
+      };
+      const res = await axios.post(`${API_BASE}/api/orchestrate/run`, payload);
+      setResult(res.data);
+    } catch (err) {
+      console.error(err);
+      setError('Pipeline failed. Please check the backend connection.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="p-8 max-w-5xl mx-auto min-h-screen space-y-8">
+      <div className="text-center space-y-2 mb-4">
+        <div className="inline-flex items-center justify-center p-3 bg-cyan-500/10 rounded-2xl mb-2">
+          <Rocket className="w-8 h-8 text-cyan-400" />
+        </div>
+        <h1 className="text-5xl font-extrabold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
+          Autopilot
+        </h1>
+        <p className="text-slate-400 text-lg">One click: search, match, analyze, prep, and draft — all through the LangGraph pipeline.</p>
+      </div>
+
+      {!email && (
+        <div className="p-4 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl text-sm text-center">
+          Set your email on the Profile page first — Autopilot needs a saved profile to run.
+        </div>
+      )}
+      {email && !hasResume && (
+        <div className="p-4 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl text-sm text-center">
+          No resume saved yet for {email}. Go to Profile and upload one before running Autopilot.
+        </div>
+      )}
+
+      <div className="bg-slate-900/80 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-4">
+        {selectedJob ? (
+          <div className="p-4 rounded-xl border border-cyan-500/30 bg-cyan-500/10 flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <Building className="w-5 h-5 text-cyan-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm text-cyan-300 font-medium">Using job picked in Job Hunter</p>
+                <p className="text-xs text-slate-400 mt-1">{selectedJob.role || selectedJob.title} @ {selectedJob.company}</p>
+              </div>
+            </div>
+            <button onClick={() => setSelectedJob(null)} className="text-xs text-slate-400 hover:text-white underline whitespace-nowrap">
+              Search fresh instead
+            </button>
+          </div>
+        ) : (
+          <>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Job title to search</label>
+              <input
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                placeholder="e.g. Senior Backend Engineer"
+                value={jobTitle}
+                onChange={(e) => setJobTitle(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Your skills (optional)</label>
+              <input
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                placeholder="Leave blank to let the AI decide based on the role"
+                value={skills}
+                onChange={(e) => setSkills(e.target.value)}
+              />
+            </div>
+          </>
+        )}
+
+        <button
+          onClick={handleRun}
+          disabled={loading || !canRun}
+          className={`w-full py-4 rounded-xl font-bold text-lg transition-all flex items-center justify-center gap-2 ${
+            loading || !canRun
+              ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+              : 'bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white shadow-lg shadow-cyan-500/20'
+          }`}
+        >
+          {loading ? <><Loader2 className="w-5 h-5 animate-spin" /> Running the full pipeline...</> : <><Rocket className="w-5 h-5" /> Run Autopilot</>}
+        </button>
+      </div>
+
+      {error && (
+        <div className="p-4 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl flex items-center gap-3 text-sm">
+          <AlertCircle className="w-5 h-5 shrink-0" /> {error}
+        </div>
+      )}
+
+      {result && (
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+          {result.errors?.length > 0 && (
+            <div className="p-4 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl text-sm space-y-1">
+              {result.errors.map((e, i) => <p key={i} className="flex items-center gap-2"><AlertCircle className="w-4 h-4 shrink-0" /> {e}</p>)}
+            </div>
+          )}
+
+          <Stage icon={Briefcase} title="Matched Job" done={!!result.selected_job}>
+            {result.selected_job && (
+              <div>
+                <p className="text-slate-200 font-medium">{result.selected_job.role || result.selected_job.title} @ {result.selected_job.company}</p>
+                <p className="text-sm text-slate-400 mt-2">{result.selected_job.summary}</p>
+                {result.selected_job.link && (
+                  <a href={result.selected_job.link} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300 mt-3">
+                    View listing <ExternalLink className="w-3 h-3" />
+                  </a>
+                )}
+              </div>
+            )}
+          </Stage>
+
+          <Stage icon={FileText} title="Resume Analysis" done={!!result.resume_analysis}>
+            {result.resume_analysis && (
+              <div className="space-y-2 text-sm">
+                <p className="text-slate-300">ATS Score: <span className="text-emerald-400 font-bold">{result.resume_analysis.ats_score}/100</span></p>
+                {result.resume_analysis.missing_keywords?.length > 0 && (
+                  <p className="text-slate-400">Missing keywords: {result.resume_analysis.missing_keywords.join(', ')}</p>
+                )}
+              </div>
+            )}
+          </Stage>
+
+          <Stage icon={MessageSquare} title="Interview Prep" done={!!result.interview_prep}>
+            {result.interview_prep && (
+              <p className="text-sm text-slate-400">
+                {result.interview_prep.technical_questions?.length || 0} technical + {result.interview_prep.behavioral_questions?.length || 0} behavioral questions generated. Full details are in the Interview Coach module.
+              </p>
+            )}
+          </Stage>
+
+          <Stage icon={Mail} title="Cold Email Draft" done={!!result.cold_email}>
+            {result.cold_email && (
+              <div className="text-sm space-y-2">
+                <p className="text-slate-300 font-medium">Subject: {result.cold_email.subject_line}</p>
+                <p className="text-slate-400 whitespace-pre-line">{result.cold_email.email_body}</p>
+              </div>
+            )}
+          </Stage>
+        </motion.div>
+      )}
+    </div>
+  );
+};
+
+export default AutoPilot;
+</file>
+
+<file path="frontend/src/components/Profile.jsx">
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import { Upload, FileText, Save, CheckCircle, Loader2, AlertCircle, User } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { useApp, API_BASE } from '../context/AppContext';
+
+const Profile = () => {
+  const { email, setEmail, profile, profileLoading, refreshProfile, hasResume } = useApp();
+  const [emailInput, setEmailInput] = useState(email);
+  const [file, setFile] = useState(null);
+  const [resumeText, setResumeText] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  // Keep the textarea in sync whenever the loaded profile changes
+  // (e.g. right after switching email or after an upload finishes).
+  useEffect(() => {
+    setResumeText(profile?.resume_text || '');
+  }, [profile]);
+
+  const handleActivateEmail = () => {
+    if (!emailInput.trim()) return;
+    setEmail(emailInput);
+    setMessage('');
+    setError('');
+  };
+
+  const handleUpload = async () => {
+    if (!email) { setError('Set your email first.'); return; }
+    if (!file) { setError('Choose a PDF to upload.'); return; }
+    setUploading(true); setError(''); setMessage('');
+
+    const formData = new FormData();
+    formData.append('email', email);
+    formData.append('file', file);
+
+    try {
+      await axios.post(`${API_BASE}/api/profile/upload`, formData);
+      setMessage('Resume uploaded and parsed. Every other module can use it now.');
+      setFile(null);
+      await refreshProfile(email);
+    } catch (err) {
+      console.error(err);
+      setError('Upload failed. Please check the backend connection.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleSaveText = async () => {
+    if (!email) { setError('Set your email first.'); return; }
+    setSaving(true); setError(''); setMessage('');
+
+    try {
+      await axios.put(`${API_BASE}/api/profile`, { email, resume_text: resumeText });
+      setMessage('Profile saved.');
+      await refreshProfile(email);
+    } catch (err) {
+      console.error(err);
+      setError('Save failed. Please check the backend connection.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="p-8 max-w-4xl mx-auto space-y-8 min-h-screen">
+      <div className="text-center space-y-2 mb-8">
+        <div className="inline-flex items-center justify-center p-3 bg-cyan-500/10 rounded-2xl mb-2">
+          <User className="w-8 h-8 text-cyan-400" />
+        </div>
+        <h1 className="text-5xl font-extrabold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
+          Your Profile
+        </h1>
+        <p className="text-slate-400 text-lg">Save your resume once — every other module reuses it automatically.</p>
+      </div>
+
+      {/* Email identifier — doubles as the profile ID until there's real auth */}
+      <div className="bg-slate-900/80 p-6 rounded-2xl border border-slate-800 shadow-xl">
+        <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">
+          Your email (used as your profile ID)
+        </label>
+        <div className="flex gap-3">
+          <input
+            className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition-all"
+            placeholder="you@example.com"
+            value={emailInput}
+            onChange={(e) => setEmailInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleActivateEmail()}
+          />
+          <button
+            onClick={handleActivateEmail}
+            disabled={!emailInput.trim()}
+            className="px-6 rounded-xl font-bold bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed text-white transition-all"
+          >
+            {email ? 'Switch' : 'Continue'}
+          </button>
+        </div>
+        {email && (
+          <p className="text-xs text-slate-500 mt-3">
+            Active profile: <span className="text-cyan-400 font-medium">{email}</span>
+          </p>
+        )}
+      </div>
+
+      {email && (
+        <>
+          {/* Upload a PDF */}
+          <div className="bg-slate-900/80 p-6 rounded-2xl border border-slate-800 shadow-xl">
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">
+              Upload / replace resume (PDF)
+            </label>
+            <div className="flex flex-col sm:flex-row items-stretch gap-4">
+              <label className={`flex-1 flex items-center justify-center h-20 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${file ? 'border-cyan-500/50 bg-cyan-500/10' : 'border-slate-700 bg-slate-800 hover:bg-slate-750'}`}>
+                <div className="flex items-center gap-3">
+                  <Upload className={`w-5 h-5 ${file ? 'text-cyan-400' : 'text-slate-500'}`} />
+                  <span className="text-sm text-slate-400">{file ? file.name : 'Click to choose a PDF'}</span>
+                </div>
+                <input type="file" className="hidden" accept=".pdf" onChange={(e) => setFile(e.target.files[0])} />
+              </label>
+              <button
+                onClick={handleUpload}
+                disabled={uploading || !file}
+                className={`px-6 rounded-xl font-bold transition-all flex items-center justify-center gap-2 ${
+                  uploading || !file
+                    ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                    : 'bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white'
+                }`}
+              >
+                {uploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><FileText className="w-5 h-5" /> Parse & save</>}
+              </button>
+            </div>
+            {profile?.filename && (
+              <p className="text-xs text-slate-500 mt-3">
+                On record: <span className="text-slate-300">{profile.filename}</span>
+                {profile.updated_at && <> · updated {new Date(profile.updated_at).toLocaleString()}</>}
+              </p>
+            )}
+          </div>
+
+          {/* Editable extracted text */}
+          <div className="bg-slate-900/80 p-6 rounded-2xl border border-slate-800 shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest">
+                Resume text (editable)
+              </label>
+              {profileLoading && <Loader2 className="w-4 h-4 animate-spin text-slate-500" />}
+            </div>
+            <textarea
+              className="w-full h-72 bg-slate-950 border border-slate-800 rounded-xl p-4 text-slate-300 text-sm leading-relaxed focus:ring-2 focus:ring-cyan-500/50 focus:outline-none resize-none placeholder:text-slate-600"
+              placeholder="Upload a PDF above, or type/paste your resume text directly here."
+              value={resumeText}
+              onChange={(e) => setResumeText(e.target.value)}
+            />
+            <button
+              onClick={handleSaveText}
+              disabled={saving}
+              className={`w-full mt-4 py-3 rounded-xl font-bold transition-all flex items-center justify-center gap-2 ${
+                saving ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-slate-800 hover:bg-slate-700 text-white'
+              }`}
+            >
+              {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Save className="w-5 h-5" /> Save edits</>}
+            </button>
+          </div>
+
+          {hasResume && (
+            <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-xl flex items-center gap-3 text-sm">
+              <CheckCircle className="w-5 h-5 shrink-0" />
+              Resume Optimizer, Interview Coach, and Cold Emailer will now use this resume by default.
+            </div>
+          )}
+
+          {(message || error) && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className={`p-4 rounded-xl flex items-center gap-3 text-sm ${
+                error ? 'bg-red-500/10 border border-red-500/20 text-red-400' : 'bg-cyan-500/10 border border-cyan-500/20 text-cyan-400'
+              }`}
+            >
+              {error ? <AlertCircle className="w-5 h-5 shrink-0" /> : <CheckCircle className="w-5 h-5 shrink-0" />}
+              {error || message}
+            </motion.div>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
+
+export default Profile;
+</file>
+
+<file path="frontend/src/components/VideoCoach.jsx">
+import React, { useState } from 'react';
+import axios from 'axios';
+import { Upload, Video, Mic, CheckCircle, AlertTriangle, Activity, Loader2 } from 'lucide-react';
+import { motion } from 'framer-motion';
+
+const VideoCoach = () => {
+  const [file, setFile] = useState(null);
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [videoUrl, setVideoUrl] = useState(null);
+
+  const handleFileChange = (e) => {
+    const selected = e.target.files[0];
+    setFile(selected);
+    setVideoUrl(URL.createObjectURL(selected));
+  };
+
+  const handleAnalyze = async () => {
+    if (!file) return;
+    setLoading(true);
+    setResult(null);
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const response = await axios.post('http://localhost:8000/api/analyze-video', formData);
+      setResult(response.data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="p-8 max-w-7xl mx-auto min-h-screen">
+      <div className="text-center space-y-4 mb-12">
+        <h1 className="text-5xl font-extrabold bg-gradient-to-r from-red-400 to-orange-400 bg-clip-text text-transparent">
+          AI Video Coach
+        </h1>
+        <p className="text-slate-400 text-lg">Upload a mock interview answer. Get instant soft-skills feedback.</p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
+        {/* LEFT: Upload & Preview */}
+        <div className="space-y-6">
+          <div className="bg-slate-900/50 p-8 rounded-3xl border border-slate-800 shadow-xl">
+            {!videoUrl ? (
+              <div className="flex items-center justify-center w-full">
+                <label className="flex flex-col items-center justify-center w-full h-64 border-2 border-dashed rounded-2xl cursor-pointer border-slate-700 bg-slate-800 hover:bg-slate-750 transition-all">
+                  <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                    <Video className="w-12 h-12 mb-4 text-slate-500" />
+                    <p className="text-sm text-slate-400">Click to upload video (MP4/MOV)</p>
+                  </div>
+                  <input type="file" className="hidden" accept="video/*" onChange={handleFileChange} />
+                </label>
+              </div>
+            ) : (
+              <div className="relative rounded-2xl overflow-hidden bg-black border border-slate-700">
+                <video src={videoUrl} controls className="w-full h-64 object-cover" />
+                <button
+                  onClick={() => { setFile(null); setVideoUrl(null); setResult(null); }}
+                  className="absolute top-4 right-4 bg-black/50 text-white px-3 py-1 rounded-full text-xs backdrop-blur-md"
+                >
+                  Change Video
+                </button>
+              </div>
+            )}
+
+            <button
+              onClick={handleAnalyze}
+              disabled={loading || !file}
+              className={`w-full mt-6 py-4 rounded-xl font-bold text-lg transition-all flex items-center justify-center gap-2 ${
+                loading
+                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-red-500 to-orange-500 hover:shadow-lg hover:shadow-red-500/20 text-white'
+              }`}
+            >
+              {loading ? <Loader2 className="animate-spin" /> : <><Activity className="w-5 h-5" /> Analyze Speech</>}
+            </button>
+          </div>
+        </div>
+
+        {/* RIGHT: Analysis Results */}
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 min-h-[500px] relative">
+          {!result ? (
+            <div className="h-full flex flex-col items-center justify-center text-slate-600">
+              <Mic className="w-16 h-16 opacity-20 mb-4" />
+              <p>Feedback will appear here.</p>
+            </div>
+          ) : (
+            <motion.div
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              className="space-y-8"
+            >
+              {/* Score Header */}
+              <div className="flex items-center justify-between bg-slate-950 p-6 rounded-2xl border border-slate-800">
+                <div>
+                  <h2 className="text-slate-400 text-sm font-bold uppercase tracking-wider mb-1">Speaking Score</h2>
+                  <div className={`text-5xl font-black ${
+                    result.score >= 80 ? 'text-green-400' : result.score >= 60 ? 'text-yellow-400' : 'text-red-400'
+                  }`}>
+                    {result.score}/100
+                  </div>
+                </div>
+                <div className="text-right">
+                  <h2 className="text-slate-400 text-sm font-bold uppercase tracking-wider mb-1">Filler Words</h2>
+                  <div className="text-2xl font-bold text-white">{result.filler_words_count}</div>
+                </div>
+              </div>
+
+              {/* General Feedback */}
+              <div className="space-y-2">
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-blue-400" /> Analysis
+                </h3>
+                <p className="text-slate-300 text-sm leading-relaxed bg-slate-950/50 p-4 rounded-xl border border-slate-800">
+                  {result.feedback}
+                </p>
+              </div>
+
+              {/* Improvements */}
+              <div className="space-y-4">
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5 text-orange-400" /> Areas for Improvement
+                </h3>
+                {result.improvements.map((item, i) => (
+                  <div key={i} className="flex gap-4 p-4 bg-orange-500/5 border border-orange-500/10 rounded-xl">
+                    <span className="flex-shrink-0 w-6 h-6 bg-orange-500/20 text-orange-400 rounded-full flex items-center justify-center text-xs font-bold">
+                      {i + 1}
+                    </span>
+                    <p className="text-slate-300 text-sm">{item}</p>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default VideoCoach;
+</file>
+
+<file path="frontend/src/context/AppContext.jsx">
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import axios from 'axios';
+
+const AppContext = createContext(null);
+
+export const API_BASE = 'http://localhost:8000';
+
+/**
+ * Task 1 (profile store) + Task 2 (job context bridge) both live here.
+ *
+ * - `email` / `profile`: the resume saved on the Profile page. Any module
+ *   (Resume Optimizer, Interview Coach, Cold Emailer) can read `profile`
+ *   instead of forcing the user to upload a PDF again.
+ * - `selectedJob`: the job the user picked in Job Hunter. Interview Coach
+ *   and Cold Emailer read this to auto-fill the job description/company
+ *   instead of a manual copy-paste.
+ *
+ * There's no login system yet, so `email` is just a plain identifier the
+ * user types once and it's remembered in localStorage. Swapping this for
+ * real auth later won't change how the other modules consume the context.
+ */
+export const AppProvider = ({ children }) => {
+  const [email, setEmailState] = useState(() => localStorage.getItem('careeros_email') || '');
+  const [profile, setProfile] = useState(null); // { email, resume_text, filename, updated_at } | null
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [selectedJob, setSelectedJob] = useState(null); // { role, company, summary, link } | null
+
+  const setEmail = (value) => {
+    const trimmed = (value || '').trim();
+    setEmailState(trimmed);
+    if (trimmed) {
+      localStorage.setItem('careeros_email', trimmed);
+    } else {
+      localStorage.removeItem('careeros_email');
+    }
+  };
+
+  const refreshProfile = useCallback(async (targetEmail) => {
+    const e = (targetEmail ?? email).trim();
+    if (!e) {
+      setProfile(null);
+      return;
+    }
+    setProfileLoading(true);
+    try {
+      const res = await axios.get(`${API_BASE}/api/profile/${encodeURIComponent(e)}`);
+      setProfile(res.data);
+    } catch (err) {
+      if (err.response && err.response.status === 404) {
+        setProfile(null); // no profile saved yet — not an error state
+      } else {
+        console.error('Failed to load profile', err);
+      }
+    } finally {
+      setProfileLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [email]);
+
+  // Whenever the active email changes (including on first load from
+  // localStorage), try to pull that profile so it's ready everywhere.
+  useEffect(() => {
+    if (email) refreshProfile(email);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [email]);
+
+  const hasResume = Boolean(profile && profile.resume_text && profile.resume_text.trim());
+
+  return (
+    <AppContext.Provider value={{
+      email, setEmail,
+      profile, setProfile, profileLoading, refreshProfile, hasResume,
+      selectedJob, setSelectedJob,
+    }}>
+      {children}
+    </AppContext.Provider>
+  );
+};
+
+export const useApp = () => {
+  const ctx = useContext(AppContext);
+  if (!ctx) throw new Error('useApp must be used inside <AppProvider>');
+  return ctx;
+};
+</file>
+
+<file path="frontend/src/App.css">
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.card {
+  padding: 2em;
+}
+
+.read-the-docs {
+  color: #888;
+}
+</file>
+
+<file path="frontend/src/index.css">
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background-color: #0f172a;
+  color: #e2e8f0;
+  font-family: 'Inter', sans-serif;
+}
+
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: #0f172a; }
+::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+</file>
+
+<file path="frontend/src/main.jsx">
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App.jsx'
+
+createRoot(document.getElementById('root')).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+</file>
+
+<file path="frontend/.gitignore">
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+</file>
+
+<file path="frontend/eslint.config.js">
+import js from '@eslint/js'
+import globals from 'globals'
+import reactHooks from 'eslint-plugin-react-hooks'
+import reactRefresh from 'eslint-plugin-react-refresh'
+import { defineConfig, globalIgnores } from 'eslint/config'
+
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{js,jsx}'],
+    extends: [
+      js.configs.recommended,
+      reactHooks.configs.flat.recommended,
+      reactRefresh.configs.vite,
+    ],
+    languageOptions: {
+      ecmaVersion: 2020,
+      globals: globals.browser,
+      parserOptions: {
+        ecmaVersion: 'latest',
+        ecmaFeatures: { jsx: true },
+        sourceType: 'module',
+      },
+    },
+    rules: {
+      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+    },
+  },
+])
+</file>
+
+<file path="frontend/index.html">
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>frontend</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+</file>
+
+<file path="frontend/package.json">
+{
+  "name": "frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "axios": "^1.13.4",
+    "clsx": "^2.1.1",
+    "framer-motion": "^12.34.0",
+    "lucide-react": "^0.563.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router-dom": "^7.13.0",
+    "tailwind-merge": "^3.4.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/react": "^19.2.5",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "autoprefixer": "^10.4.24",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "vite": "^7.2.4"
+  }
+}
+</file>
+
+<file path="frontend/postcss.config.js">
+export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+}
+</file>
+
+<file path="frontend/README.md">
+# React + Vite
+
+This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+
+Currently, two official plugins are available:
+
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+
+## React Compiler
+
+The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+
+## Expanding the ESLint configuration
+
+If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+</file>
+
+<file path="frontend/tailwind.config.js">
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: [
+    "./index.html",
+    "./src/**/*.{js,ts,jsx,tsx}",
+  ],
+  theme: {
+    extend: {
+      colors: {
+        slate: {
+          850: '#1e293b',
+          950: '#0f172a',
+        }
+      }
+    },
+  },
+  plugins: [],
+}
+</file>
+
+<file path="frontend/vite.config.js">
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [react()],
+})
+</file>
+
+<file path=".gitignore">
+# --- Python (Backend) ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# --- Node.js (Frontend) ---
+node_modules/
+dist/
+build/
+.npm/
+
+# --- Environment Variables (SENSITIVE) ---
+.env
+.env.local
+
+# --- OS Files ---
+.DS_Store
+Thumbs.db
+</file>
+
+<file path="Structure">
+Career-Agent-OS/
+├── backend/                # FastAPI & LangGraph logic
+│   ├── app/
+│   │   ├── main.py         # Entry point & API routes
+│   │   ├── database.py     # MongoDB connection & Schemas
+│   │   └── dependencies.py # API Keys & Shared Utils
+│   ├── agents/             # CrewAI Squads
+│   │   ├── hunter_crew.py  # Job Scraper Logic
+│   │   └── reviewer_crew.py # Resume/Soft Skills Logic
+│   ├── graph/              # LangGraph Orchestration
+│   │   ├── state.py        # The AgentState definition
+│   │   ├── nodes.py        # Logic for each graph node
+│   │   └── workflows.py    # Connecting nodes into a Graph
+│   └── requirements.txt
+├── frontend/               # React (Vite) App
+│   ├── src/
+│   │   ├── components/     # UI Modules (Scraper, Optimizer, etc.)
+│   │   ├── hooks/          # API calling logic
+│   │   └── App.jsx
+│   └── package.json
+└── .env                    # API Keys (Tavily, Gemini, OpenAI)
+
+
+
+update :
+backend/
+└── agents/
+    ├── config/
+    │   ├── agents.yaml    # Roles, Goals, Backstories
+    │   └── tasks.yaml     # Specific task descriptions
+    ├── hunter_crew.py     # Python logic to load YAML and run Crew
+    └── ...
+</file>
+
+<file path="test.py">
+import os
+from groq import Groq
+from dotenv import load_dotenv
+
+load_dotenv()
+
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+try:
+    models = client.models.list()
+    print(f"✅ Successfully connected! Here are your available models:\n")
+    for model in models.data:
+        print(f" - {model.id}")
+except Exception as e:
+    print(f"❌ Error fetching models: {e}")
+</file>
+
+<file path="backend/app/database.py">
+import os
+from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv(override=True)
+
+MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017")
+client = AsyncIOMotorClient(MONGO_URL)
+db = client.career_os_db
+
+# Collections
+users_collection = db.users
+history_collection = db.chat_history
+
+# User Profile Schema
+class UserProfile(BaseModel):
+    name: str
+    email: str
+    skills: List[str] = []
+    experience: List[Dict] = []
+    projects: List[Dict] = []
+    resume_text: Optional[str] = None
+    preferences: Dict = Field(default_factory=dict)
+
+# DB Helper Functions
+async def get_user_profile(email: str):
+    return await users_collection.find_one({"email": email})
+
+async def save_user_profile(profile_data: dict):
+    return await users_collection.update_one(
+        {"email": profile_data["email"]},
+        {"$set": profile_data},
+        upsert=True
+    )
+</file>
+
+<file path="backend/graph/nodes.py">
+"""
+LangGraph nodes for the "autopilot" pipeline.
+
+Each node is a small async function: `(state: PipelineState) -> dict`.
+LangGraph calls them in the order wired up in workflows.py, merging
+whatever dict each one returns into the shared state before the next node
+runs.
+
+Every node wraps one of the crews that already power the standalone
+/api/... routes in main.py — nothing new is happening AI-wise, this is
+purely about chaining the existing steps together instead of requiring five
+separate button clicks.
+
+The three CrewAI crews used here (Resume/Interview/Email) expose a
+*synchronous* `.kickoff()` — same as in main.py, that's offloaded to a
+worker thread with `asyncio.to_thread` so it doesn't block the event loop.
+JobHunterCrew already exposes an async `.kickoff()`.
+
+Autopilot fires up to 4 LLM calls back-to-back in a single request (search,
+resume, interview, email), which is enough on its own to trip a per-minute
+Groq rate limit even with just one user running it — a small delay between
+stages spreads the calls out so that's less likely to happen in the first
+place. It's a cheap mitigation on top of the retry/backoff already
+configured on each LLM() instance in the crew files.
+"""
+import asyncio
+
+from agents.hunter_crew import JobHunterCrew
+from agents.resume_crew import ResumeCrew
+from agents.interview_crew import InterviewCrew
+from agents.email_crew import EmailCrew
+from app import profile_store
+from app.utils import parse_agent_output, is_rate_limit_error
+from graph.state import PipelineState
+
+# Pause between successive LLM-calling stages in the pipeline, to spread
+# out the request rate rather than firing 4 calls in immediate succession.
+INTER_STAGE_DELAY_SECONDS = 2
+
+
+def _with_error(state: PipelineState, message: str) -> dict:
+    return {"errors": [*state.get("errors", []), message]}
+
+
+def _describe_failure(stage: str, e: Exception) -> str:
+    if is_rate_limit_error(e):
+        return f"{stage} failed: Groq's rate limit was hit. Wait a moment and try again."
+    return f"{stage} failed: {e}"
+
+
+async def load_profile_node(state: PipelineState) -> dict:
+    """Pull the saved resume for this email out of the profile store (Task 1)."""
+    email = state.get("email", "").strip()
+    if not email:
+        return _with_error(state, "No email provided — can't look up a profile.")
+
+    profile = await asyncio.to_thread(profile_store.get_profile, email)
+    if not profile or not profile.get("resume_text", "").strip():
+        return _with_error(
+            state,
+            f"No saved resume found for {email}. Upload one on the Profile page first."
+        )
+
+    return {"resume_text": profile["resume_text"]}
+
+
+async def hunt_jobs_node(state: PipelineState) -> dict:
+    """Search for jobs matching job_title/skills (only runs if no job was pre-selected)."""
+    job_title = state.get("job_title", "").strip()
+    if not job_title:
+        return _with_error(state, "No job title provided to search for.")
+
+    try:
+        crew = JobHunterCrew()
+        result = await crew.kickoff(inputs={
+            "job_title": job_title,
+            "skills": state.get("skills") or None
+        })
+        parsed = parse_agent_output(result)
+        jobs = parsed if isinstance(parsed, list) else parsed.get("jobs", [])
+    except Exception as e:
+        return _with_error(state, _describe_failure("Job search", e))
+
+    if not jobs:
+        return _with_error(state, f"No jobs found for '{job_title}'.")
+    return {"jobs": jobs}
+
+
+def pick_job_node(state: PipelineState) -> dict:
+    """Take the top result from the search as the job to build everything else around."""
+    jobs = state.get("jobs", [])
+    if not jobs:
+        return _with_error(state, "No jobs available to select from.")
+    return {"selected_job": jobs[0]}
+
+
+async def analyze_resume_node(state: PipelineState) -> dict:
+    job = state.get("selected_job")
+    if not job:
+        return _with_error(state, "No selected job to analyze the resume against.")
+
+    await asyncio.sleep(INTER_STAGE_DELAY_SECONDS)
+    try:
+        crew = ResumeCrew()
+        result = await asyncio.to_thread(crew.kickoff, {
+            "resume_text": state["resume_text"],
+            "job_description": job.get("summary", "")
+        })
+        return {"resume_analysis": parse_agent_output(result)}
+    except Exception as e:
+        return _with_error(state, _describe_failure("Resume analysis", e))
+
+
+async def prep_interview_node(state: PipelineState) -> dict:
+    job = state.get("selected_job")
+    if not job:
+        return _with_error(state, "No selected job to prep interview questions for.")
+
+    await asyncio.sleep(INTER_STAGE_DELAY_SECONDS)
+    try:
+        crew = InterviewCrew()
+        result = await asyncio.to_thread(crew.kickoff, {
+            "resume_text": state["resume_text"],
+            "job_description": job.get("summary", "")
+        })
+        return {"interview_prep": parse_agent_output(result)}
+    except Exception as e:
+        return _with_error(state, _describe_failure("Interview prep", e))
+
+
+async def draft_email_node(state: PipelineState) -> dict:
+    job = state.get("selected_job")
+    if not job:
+        return _with_error(state, "No selected job to draft a cold email for.")
+
+    await asyncio.sleep(INTER_STAGE_DELAY_SECONDS)
+    try:
+        crew = EmailCrew()
+        result = await asyncio.to_thread(crew.kickoff, {
+            "resume_text": state["resume_text"],
+            "job_description": job.get("summary", ""),
+            "company_name": job.get("company", "the company"),
+            "recipient_name": "Hiring Manager"
+        })
+        return {"cold_email": parse_agent_output(result)}
+    except Exception as e:
+        return _with_error(state, _describe_failure("Cold email draft", e))
+</file>
+
+<file path="backend/graph/state.py">
+"""
+Shared state that flows through the LangGraph pipeline.
+
+The original scaffold here (`messages` / `user_profile` / `active_module` /
+`is_approved`) was designed for a generic chatbot and never matched what
+this app actually does, which is why it was never wired up. This version
+matches the real pipeline: profile -> job search -> resume match -> interview
+prep -> cold email.
+
+`total=False` means every field is optional — each node only needs to read
+the fields earlier nodes actually filled in, and only writes the fields it's
+responsible for. LangGraph merges each node's return dict into this state
+automatically.
+"""
+from typing import List, Dict, Optional
+from typing_extensions import TypedDict
+
+
+class PipelineState(TypedDict, total=False):
+    # --- inputs, provided by the caller ---
+    email: str
+    job_title: str
+    skills: Optional[str]
+    # If the frontend already has a job picked (Task 2's job context
+    # bridge), pass it in here to skip straight to matching against it
+    # instead of running a fresh search.
+    selected_job: Optional[Dict]
+
+    # --- filled in by load_profile_node ---
+    resume_text: str
+
+    # --- filled in by hunt_jobs_node / pick_job_node ---
+    jobs: List[Dict]
+
+    # --- filled in by analyze_resume_node / prep_interview_node / draft_email_node ---
+    resume_analysis: Optional[Dict]
+    interview_prep: Optional[Dict]
+    cold_email: Optional[Dict]
+
+    # --- bookkeeping ---
+    # Any node that hits a problem appends a message here instead of
+    # raising, so the graph can route to END cleanly and the caller still
+    # gets back everything that *did* succeed.
+    errors: List[str]
+</file>
+
+<file path="backend/graph/workflows.py">
+"""
+Wires the nodes in graph/nodes.py into an actual LangGraph StateGraph.
+
+This is the piece that was missing before: `graph/state.py` had a state
+shape and `graph/nodes.py` had (a broken) node, but nothing ever built a
+StateGraph out of them, and nothing in main.py imported this module — so
+LangGraph sat in requirements.txt doing nothing.
+
+Pipeline shape:
+
+    START
+      |
+      v
+    load_profile ----(no resume saved)----> END
+      |
+      | (resume loaded)
+      v
+    [job already selected?] --yes--> analyze_resume
+      |no
+      v
+    hunt_jobs ----(no jobs found)----> END
+      |
+      v
+    pick_job
+      |
+      v
+    analyze_resume ----(analysis failed)----> END
+      |
+      v
+    prep_interview ----(prep failed)----> END
+      |
+      v
+    draft_email
+      |
+      v
+     END
+
+The branch right after `load_profile` is the actual payoff of using a graph
+here instead of five sequential function calls: a job picked via the Job
+Hunter's "Prep interview" / "Draft email" buttons (Task 2's job context
+bridge) skips straight to `analyze_resume`, while a fresh run from a bare
+job title goes through `hunt_jobs` -> `pick_job` first. Both paths converge
+on the same downstream nodes.
+"""
+from langgraph.graph import StateGraph, START, END
+
+from graph.state import PipelineState
+from graph.nodes import (
+    load_profile_node,
+    hunt_jobs_node,
+    pick_job_node,
+    analyze_resume_node,
+    prep_interview_node,
+    draft_email_node,
+)
+
+
+def _ok_or_stop(state: PipelineState) -> str:
+    return "stop" if state.get("errors") else "continue"
+
+
+def _route_after_profile(state: PipelineState) -> str:
+    if state.get("errors"):
+        return "stop"
+    if state.get("selected_job"):
+        return "has_job"
+    return "need_job"
+
+
+def build_pipeline_graph():
+    graph = StateGraph(PipelineState)
+
+    graph.add_node("load_profile", load_profile_node)
+    graph.add_node("hunt_jobs", hunt_jobs_node)
+    graph.add_node("pick_job", pick_job_node)
+    graph.add_node("analyze_resume", analyze_resume_node)
+    graph.add_node("prep_interview", prep_interview_node)
+    graph.add_node("draft_email", draft_email_node)
+
+    graph.add_edge(START, "load_profile")
+
+    graph.add_conditional_edges("load_profile", _route_after_profile, {
+        "stop": END,
+        "has_job": "analyze_resume",
+        "need_job": "hunt_jobs",
+    })
+
+    graph.add_conditional_edges("hunt_jobs", _ok_or_stop, {
+        "continue": "pick_job",
+        "stop": END,
+    })
+
+    graph.add_edge("pick_job", "analyze_resume")
+
+    graph.add_conditional_edges("analyze_resume", _ok_or_stop, {
+        "continue": "prep_interview",
+        "stop": END,
+    })
+
+    graph.add_conditional_edges("prep_interview", _ok_or_stop, {
+        "continue": "draft_email",
+        "stop": END,
+    })
+
+    graph.add_edge("draft_email", END)
+
+    return graph.compile()
+
+
+# Compiled once at import time and reused for every request — building the
+# graph is cheap but there's no reason to redo it on every call.
+_compiled_graph = build_pipeline_graph()
+
+
+async def run_pipeline(inputs: dict) -> dict:
+    """
+    Runs the full autopilot pipeline end to end and returns the final state
+    as a plain dict. `inputs` should contain at least `email` and either
+    `job_title` (to search fresh) or `selected_job` (to skip straight to
+    matching against a job already picked in the UI).
+    """
+    initial_state: PipelineState = {
+        "email": inputs.get("email", ""),
+        "job_title": inputs.get("job_title", ""),
+        "skills": inputs.get("skills"),
+        "selected_job": inputs.get("selected_job"),
+        "errors": [],
+    }
+    final_state = await _compiled_graph.ainvoke(initial_state)
+    return final_state
+</file>
+
+<file path="frontend/src/components/ColdEmail.jsx">
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import { Upload, Mail, Send, Copy, Check, Sparkles, Loader2, User, Building, CheckCircle2, RefreshCw } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { useApp, API_BASE } from '../context/AppContext';
+
+const ColdEmail = () => {
+  const { profile, hasResume, selectedJob, setSelectedJob } = useApp();
+  const [file, setFile] = useState(null);
+  const [useProfileResume, setUseProfileResume] = useState(hasResume);
+  const [jd, setJd] = useState('');
+  const [company, setCompany] = useState('');
+  const [recipient, setRecipient] = useState('');
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    setUseProfileResume(hasResume);
+  }, [hasResume]);
+
+  // Task 2: job context bridge — prefill company + description from the
+  // job picked in Job Hunter, instead of typing it all in again.
+  useEffect(() => {
+    if (selectedJob) {
+      if (!jd) setJd(selectedJob.summary || '');
+      if (!company) setCompany(selectedJob.company || '');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedJob]);
+
+  const canGenerate = jd && company && (useProfileResume ? hasResume : file);
+
+  const handleGenerate = async () => {
+    if (!canGenerate) return;
+    setLoading(true);
+    setResult(null);
+
+    const formData = new FormData();
+    if (useProfileResume) {
+      formData.append('resume_text', profile.resume_text);
+    } else {
+      formData.append('file', file);
+    }
+    formData.append('job_description', jd);
+    formData.append('company', company);
+    formData.append('recipient', recipient || 'Hiring Manager');
+
+    try {
+      const response = await axios.post(`${API_BASE}/api/generate-email`, formData);
+      setResult(response.data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copyToClipboard = () => {
+    if (!result) return;
+    const text = `Subject: ${result.subject_line}\n\n${result.email_body}`;
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="p-8 max-w-7xl mx-auto min-h-screen">
+      <div className="text-center space-y-4 mb-12">
+        <h1 className="text-5xl font-extrabold bg-gradient-to-r from-orange-400 to-pink-500 bg-clip-text text-transparent">
+          Cold Email Writer
+        </h1>
+        <p className="text-slate-400 text-lg">Skip the line. Email the recruiter directly.</p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* LEFT: Inputs */}
+        <div className="space-y-6">
+          <div className="bg-slate-900/50 p-6 rounded-2xl border border-slate-800 shadow-xl">
+            {/* Resume Upload */}
+            <label className="block text-sm font-semibold text-slate-300 mb-4 uppercase tracking-wider">1. Your Resume</label>
+
+            {hasResume && useProfileResume ? (
+              <div className="mb-6 p-4 rounded-xl border border-orange-500/30 bg-orange-500/10 flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <CheckCircle2 className="w-5 h-5 text-orange-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm text-orange-300 font-medium">Using your saved profile resume</p>
+                    <p className="text-xs text-slate-500 mt-1">{profile?.filename || 'Edited profile text'}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setUseProfileResume(false)}
+                  className="text-xs text-slate-400 hover:text-white underline whitespace-nowrap"
+                >
+                  Upload different
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center w-full mb-3">
+                <label className={`flex flex-col items-center justify-center w-full h-24 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${file ? 'border-orange-500/50 bg-orange-500/10' : 'border-slate-700 bg-slate-800 hover:bg-slate-750'}`}>
+                  <div className="flex flex-col items-center justify-center">
+                    <Upload className={`w-6 h-6 mb-2 ${file ? 'text-orange-400' : 'text-slate-500'}`} />
+                    <p className="text-xs text-slate-400">{file ? file.name : "Upload PDF"}</p>
+                  </div>
+                  <input type="file" className="hidden" accept=".pdf" onChange={(e) => setFile(e.target.files[0])} />
+                </label>
+              </div>
+            )}
+            {hasResume && !useProfileResume && (
+              <button
+                onClick={() => { setUseProfileResume(true); setFile(null); }}
+                className="mb-6 text-xs text-orange-400 hover:text-orange-300 underline"
+              >
+                Use saved profile resume instead
+              </button>
+            )}
+
+            {/* Context Inputs */}
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-2">Company Name</label>
+                <div className="flex items-center bg-slate-950 border border-slate-700 rounded-lg p-3">
+                  <Building className="w-4 h-4 text-slate-500 mr-2" />
+                  <input className="bg-transparent w-full text-sm text-slate-200 focus:outline-none" placeholder="e.g. Google" value={company} onChange={(e) => setCompany(e.target.value)} />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-2">Recruiter Name (Opt)</label>
+                <div className="flex items-center bg-slate-950 border border-slate-700 rounded-lg p-3">
+                  <User className="w-4 h-4 text-slate-500 mr-2" />
+                  <input className="bg-transparent w-full text-sm text-slate-200 focus:outline-none" placeholder="e.g. Sarah" value={recipient} onChange={(e) => setRecipient(e.target.value)} />
+                </div>
+              </div>
+            </div>
+
+            <label className="block text-xs font-bold text-slate-500 mb-2">Job Description</label>
+            {selectedJob && (
+              <div className="mb-2 flex items-center justify-between text-xs text-orange-400">
+                <span>Auto-filled from Job Hunter: {selectedJob.role || selectedJob.title} @ {selectedJob.company}</span>
+                <button
+                  onClick={() => { setSelectedJob(null); setJd(''); setCompany(''); }}
+                  className="flex items-center gap-1 text-slate-500 hover:text-white"
+                  title="Clear"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                </button>
+              </div>
+            )}
+            <textarea
+              className="w-full h-32 bg-slate-950 border border-slate-700 rounded-lg p-4 text-slate-300 text-sm focus:ring-2 focus:ring-orange-500 focus:outline-none resize-none"
+              placeholder="Paste JD here, or pick a job from Job Hunter to auto-fill..."
+              value={jd}
+              onChange={(e) => setJd(e.target.value)}
+            />
+
+            <button
+              onClick={handleGenerate}
+              disabled={loading || !canGenerate}
+              className={`w-full mt-6 py-4 rounded-xl font-bold text-lg transition-all flex items-center justify-center gap-2 ${
+                loading || !canGenerate
+                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-orange-500 to-pink-500 hover:shadow-lg hover:shadow-orange-500/20 text-white'
+              }`}
+            >
+              {loading ? <Loader2 className="animate-spin" /> : <><Sparkles className="w-5 h-5" /> Generate Email</>}
+            </button>
+          </div>
+        </div>
+
+        {/* RIGHT: Results */}
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 min-h-[500px] relative">
+          {!result ? (
+            <div className="h-full flex flex-col items-center justify-center text-slate-600">
+              <Mail className="w-16 h-16 opacity-20 mb-4" />
+              <p>Draft will appear here.</p>
+            </div>
+          ) : (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-6"
+            >
+              {/* Subject Line */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-500 uppercase">Subject</label>
+                <div className="bg-slate-950 border border-slate-800 p-4 rounded-xl text-slate-200 font-medium">
+                  {result.subject_line}
+                </div>
+              </div>
+
+              {/* Body */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-500 uppercase">Email Body</label>
+                <div className="bg-slate-950 border border-slate-800 p-6 rounded-xl text-slate-300 text-sm leading-relaxed whitespace-pre-wrap">
+                  {result.email_body}
+                </div>
+              </div>
+
+              {/* Strategy */}
+              <div className="bg-blue-900/10 border border-blue-500/20 p-4 rounded-xl">
+                <h4 className="text-blue-400 text-xs font-bold mb-2 uppercase">Why this works</h4>
+                <p className="text-slate-400 text-xs">{result.explanation}</p>
+              </div>
+
+              {/* Actions */}
+              <button
+                onClick={copyToClipboard}
+                className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-medium transition-all flex items-center justify-center gap-2"
+              >
+                {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+                {copied ? "Copied!" : "Copy to Clipboard"}
+              </button>
+            </motion.div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default ColdEmail;
+</file>
+
+<file path="frontend/src/components/InterviewPrep.jsx">
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import { Upload, FileText, MessageSquare, ChevronDown, ChevronUp, Lightbulb, BrainCircuit, Loader2, CheckCircle2, RefreshCw } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { useApp, API_BASE } from '../context/AppContext';
+
+const InterviewPrep = () => {
+  const { profile, hasResume, selectedJob, setSelectedJob } = useApp();
+  const [file, setFile] = useState(null);
+  // Default to the saved profile resume when one exists; the user can still
+  // switch to uploading a different PDF for this one run.
+  const [useProfileResume, setUseProfileResume] = useState(hasResume);
+  const [jd, setJd] = useState('');
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState('technical'); // technical | behavioral
+
+  // Keep the toggle in sync if the profile finishes loading after mount.
+  useEffect(() => {
+    setUseProfileResume(hasResume);
+  }, [hasResume]);
+
+  // Task 2: job context bridge — if a job was picked in Job Hunter, use it
+  // to prefill the description here instead of a manual copy-paste.
+  useEffect(() => {
+    if (selectedJob && !jd) {
+      setJd(selectedJob.summary || '');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedJob]);
+
+  const canGenerate = jd && (useProfileResume ? hasResume : file);
+
+  const handleGenerate = async () => {
+    if (!canGenerate) return;
+    setLoading(true);
+    setResult(null);
+
+    const formData = new FormData();
+    if (useProfileResume) {
+      formData.append('resume_text', profile.resume_text);
+    } else {
+      formData.append('file', file);
+    }
+    formData.append('job_description', jd);
+
+    try {
+      const response = await axios.post(`${API_BASE}/api/interview-prep`, formData);
+      setResult(response.data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="p-8 max-w-7xl mx-auto min-h-screen">
+      <div className="text-center space-y-4 mb-12">
+        <h1 className="text-5xl font-extrabold bg-gradient-to-r from-violet-400 to-fuchsia-400 bg-clip-text text-transparent">
+          AI Interview Coach
+        </h1>
+        <p className="text-slate-400 text-lg">Generate targeted questions based on your resume gaps.</p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        {/* LEFT: Input Section */}
+        <div className="lg:col-span-4 space-y-6">
+          <div className="bg-slate-900/50 p-6 rounded-2xl border border-slate-800 shadow-xl">
+            <label className="block text-sm font-semibold text-slate-300 mb-4 uppercase tracking-wider">1. Resume</label>
+
+            {hasResume && useProfileResume ? (
+              <div className="mb-6 p-4 rounded-xl border border-violet-500/30 bg-violet-500/10 flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <CheckCircle2 className="w-5 h-5 text-violet-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm text-violet-300 font-medium">Using your saved profile resume</p>
+                    <p className="text-xs text-slate-500 mt-1">{profile?.filename || 'Edited profile text'}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setUseProfileResume(false)}
+                  className="text-xs text-slate-400 hover:text-white underline whitespace-nowrap"
+                >
+                  Upload different
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center w-full mb-3">
+                <label className={`flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${file ? 'border-violet-500/50 bg-violet-500/10' : 'border-slate-700 bg-slate-800 hover:bg-slate-750'}`}>
+                  <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                    <FileText className={`w-8 h-8 mb-2 ${file ? 'text-violet-400' : 'text-slate-500'}`} />
+                    <p className="text-xs text-slate-400">{file ? file.name : "Upload PDF"}</p>
+                  </div>
+                  <input type="file" className="hidden" accept=".pdf" onChange={(e) => setFile(e.target.files[0])} />
+                </label>
+              </div>
+            )}
+            {hasResume && !useProfileResume && (
+              <button
+                onClick={() => { setUseProfileResume(true); setFile(null); }}
+                className="mb-6 text-xs text-violet-400 hover:text-violet-300 underline"
+              >
+                Use saved profile resume instead
+              </button>
+            )}
+
+            <label className="block text-sm font-semibold text-slate-300 mb-4 uppercase tracking-wider">2. Job Description</label>
+            {selectedJob && (
+              <div className="mb-2 flex items-center justify-between text-xs text-fuchsia-400">
+                <span>Auto-filled from Job Hunter: {selectedJob.role || selectedJob.title} @ {selectedJob.company}</span>
+                <button
+                  onClick={() => { setSelectedJob(null); setJd(''); }}
+                  className="flex items-center gap-1 text-slate-500 hover:text-white"
+                  title="Clear"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                </button>
+              </div>
+            )}
+            <textarea
+              className="w-full h-48 bg-slate-950 border border-slate-700 rounded-xl p-4 text-slate-300 text-sm focus:ring-2 focus:ring-violet-500 focus:outline-none resize-none"
+              placeholder="Paste JD here, or pick a job from Job Hunter to auto-fill..."
+              value={jd}
+              onChange={(e) => setJd(e.target.value)}
+            />
+
+            <button
+              onClick={handleGenerate}
+              disabled={loading || !canGenerate}
+              className={`w-full mt-6 py-4 rounded-xl font-bold text-lg transition-all flex items-center justify-center gap-2 ${
+                loading || !canGenerate
+                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:shadow-lg hover:shadow-violet-500/20 text-white'
+              }`}
+            >
+              {loading ? <Loader2 className="animate-spin" /> : <><BrainCircuit className="w-5 h-5" /> Generate Prep</>}
+            </button>
+          </div>
+
+          {/* Tips Section (Only shows when result is ready) */}
+          {result && (
+            <div className="bg-emerald-900/20 p-6 rounded-2xl border border-emerald-500/30">
+              <h3 className="text-emerald-400 font-bold flex items-center gap-2 mb-4">
+                <Lightbulb className="w-5 h-5" /> Quick Tips
+              </h3>
+              <ul className="space-y-3">
+                {result.tips.map((tip, i) => (
+                  <li key={i} className="text-emerald-200/80 text-sm flex gap-2">
+                    <span className="text-emerald-500">•</span> {tip}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+
+        {/* RIGHT: Questions Display */}
+        <div className="lg:col-span-8">
+          {!result ? (
+            <div className="h-full flex flex-col items-center justify-center text-slate-600 border-2 border-dashed border-slate-800 rounded-3xl min-h-[500px]">
+              <MessageSquare className="w-16 h-16 opacity-20 mb-4" />
+              <p>Your personalized interview questions will appear here.</p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {/* Tabs */}
+              <div className="flex gap-4 border-b border-slate-800 pb-1">
+                <button
+                  onClick={() => setActiveTab('technical')}
+                  className={`pb-3 px-4 font-medium transition-colors relative ${
+                    activeTab === 'technical' ? 'text-violet-400' : 'text-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  Technical Questions
+                  {activeTab === 'technical' && (
+                    <motion.div layoutId="tab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-violet-400" />
+                  )}
+                </button>
+                <button
+                  onClick={() => setActiveTab('behavioral')}
+                  className={`pb-3 px-4 font-medium transition-colors relative ${
+                    activeTab === 'behavioral' ? 'text-fuchsia-400' : 'text-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  Behavioral Questions
+                  {activeTab === 'behavioral' && (
+                    <motion.div layoutId="tab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-fuchsia-400" />
+                  )}
+                </button>
+              </div>
+
+              {/* Questions List */}
+              <div className="space-y-4">
+                {(activeTab === 'technical' ? result.technical_questions : result.behavioral_questions).map((q, i) => (
+                  <QuestionCard key={i} data={q} index={i} type={activeTab} />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Sub-component for individual questions
+const QuestionCard = ({ data, index, type }) => {
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: index * 0.1 }}
+      className={`rounded-xl border transition-all overflow-hidden ${
+        type === 'technical'
+          ? 'bg-slate-900 border-slate-800 hover:border-violet-500/30'
+          : 'bg-slate-900 border-slate-800 hover:border-fuchsia-500/30'
+      }`}
+    >
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full text-left p-6 flex justify-between items-start gap-4"
+      >
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <span className={`text-xs font-bold px-2 py-1 rounded uppercase ${
+              type === 'technical' ? 'bg-violet-500/10 text-violet-400' : 'bg-fuchsia-500/10 text-fuchsia-400'
+            }`}>
+              Question {index + 1}
+            </span>
+            <span className="text-xs text-slate-500 italic border-l border-slate-700 pl-2">
+              {data.context}
+            </span>
+          </div>
+          <h3 className="text-lg font-medium text-slate-200">{data.question}</h3>
+        </div>
+        {isOpen ? <ChevronUp className="w-5 h-5 text-slate-500" /> : <ChevronDown className="w-5 h-5 text-slate-500" />}
+      </button>
+
+      <AnimatePresence>
+        {isOpen && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="border-t border-slate-800 bg-slate-950/50"
+          >
+            <div className="p-6 text-slate-300 text-sm leading-relaxed space-y-2">
+              <p className="font-bold text-slate-400 uppercase text-xs">Ideal Answer (STAR Method):</p>
+              <p>{data.sample_answer}</p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+};
+
+export default InterviewPrep;
+</file>
+
+<file path="frontend/src/components/ResumeOptimizer.jsx">
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import { Upload, FileText, CheckCircle, AlertCircle, Award, ArrowRight, Loader2, CheckCircle2 } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { useApp, API_BASE } from '../context/AppContext';
+
+const ResumeOptimizer = () => {
+  const { profile, hasResume } = useApp();
+  const [file, setFile] = useState(null);
+  const [useProfileResume, setUseProfileResume] = useState(hasResume);
+  const [jd, setJd] = useState('');
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setUseProfileResume(hasResume);
+  }, [hasResume]);
+
+  const handleAnalyze = async () => {
+    if ((useProfileResume ? !hasResume : !file) || !jd) {
+      setError("Please provide a resume (profile or upload) and paste a job description.");
+      return;
+    }
+    setLoading(true);
+    setError('');
+    setResult(null);
+
+    const formData = new FormData();
+    if (useProfileResume) {
+      formData.append('resume_text', profile.resume_text);
+    } else {
+      formData.append('file', file);
+    }
+    formData.append('job_description', jd);
+
+    try {
+      const response = await axios.post(`${API_BASE}/api/analyze-resume`, formData);
+      setResult(response.data);
+    } catch (err) {
+      console.error(err);
+      setError("Analysis failed. Please check the backend connection.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="p-8 max-w-7xl mx-auto space-y-8 min-h-screen">
+      <div className="text-center space-y-2 mb-12">
+        <h1 className="text-5xl font-extrabold bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">
+          AI Resume Architect
+        </h1>
+        <p className="text-slate-400 text-lg">Optimize your resume for ATS systems in seconds.</p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* LEFT: Inputs */}
+        <motion.div
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="space-y-6"
+        >
+          {/* File Upload */}
+          <div className="bg-slate-800/50 p-8 rounded-2xl border border-slate-700/50 hover:border-emerald-500/30 transition-all shadow-lg backdrop-blur-sm">
+            <label className="block text-sm font-semibold text-slate-300 mb-4 uppercase tracking-wider">1. Resume</label>
+
+            {hasResume && useProfileResume ? (
+              <div className="mb-2 p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm text-emerald-300 font-medium">Using your saved profile resume</p>
+                    <p className="text-xs text-slate-500 mt-1">{profile?.filename || 'Edited profile text'}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setUseProfileResume(false)}
+                  className="text-xs text-slate-400 hover:text-white underline whitespace-nowrap"
+                >
+                  Upload different
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center w-full">
+                <label className={`flex flex-col items-center justify-center w-full h-40 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${file ? 'border-emerald-500/50 bg-emerald-500/10' : 'border-slate-600 bg-slate-800 hover:bg-slate-750'}`}>
+                  <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                    {file ? (
+                      <>
+                        <FileText className="w-10 h-10 mb-3 text-emerald-400" />
+                        <p className="text-sm text-emerald-300 font-medium">{file.name}</p>
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-10 h-10 mb-3 text-slate-400" />
+                        <p className="text-sm text-slate-400">Click to upload or drag & drop</p>
+                      </>
+                    )}
+                  </div>
+                  <input
+                    type="file"
+                    className="hidden"
+                    accept=".pdf"
+                    onChange={(e) => setFile(e.target.files[0])}
+                  />
+                </label>
+              </div>
+            )}
+            {hasResume && !useProfileResume && (
+              <button
+                onClick={() => { setUseProfileResume(true); setFile(null); }}
+                className="mt-3 text-xs text-emerald-400 hover:text-emerald-300 underline"
+              >
+                Use saved profile resume instead
+              </button>
+            )}
+          </div>
+
+          {/* JD Input */}
+          <div className="bg-slate-800/50 p-8 rounded-2xl border border-slate-700/50 shadow-lg backdrop-blur-sm">
+            <label className="block text-sm font-semibold text-slate-300 mb-4 uppercase tracking-wider">2. Job Description</label>
+            <textarea
+              className="w-full h-64 bg-slate-900/50 border border-slate-700 rounded-xl p-4 text-slate-300 focus:ring-2 focus:ring-emerald-500 focus:border-transparent focus:outline-none resize-none transition-all placeholder:text-slate-600"
+              placeholder="Paste the full job description here..."
+              value={jd}
+              onChange={(e) => setJd(e.target.value)}
+            />
+          </div>
+
+          <button
+            onClick={handleAnalyze}
+            disabled={loading}
+            className={`w-full py-4 rounded-xl font-bold text-lg transition-all flex items-center justify-center gap-3 shadow-lg ${
+              loading
+                ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                : 'bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white hover:shadow-emerald-500/25 hover:-translate-y-1'
+            }`}
+          >
+            {loading ? (
+              <><Loader2 className="w-6 h-6 animate-spin" /> Analyzing...</>
+            ) : (
+              <><Award className="w-6 h-6" /> Analyze Match</>
+            )}
+          </button>
+
+          {error && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="p-4 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl flex items-center gap-3"
+            >
+              <AlertCircle className="w-5 h-5 shrink-0" /> {error}
+            </motion.div>
+          )}
+        </motion.div>
+
+        {/* RIGHT: Results */}
+        <motion.div
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="bg-slate-900/80 rounded-3xl border border-slate-800 p-8 min-h-[600px] flex flex-col relative overflow-hidden"
+        >
+          {!result ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-slate-500 space-y-6">
+              <div className="w-24 h-24 rounded-full bg-slate-800/50 flex items-center justify-center">
+                <FileText className="w-10 h-10 opacity-20" />
+              </div>
+              <p className="text-lg">Ready to optimize. Upload your resume to begin.</p>
+            </div>
+          ) : (
+            <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+
+              {/* Score Card */}
+              <div className="relative overflow-hidden bg-slate-800/50 p-8 rounded-2xl border border-slate-700 flex items-center justify-between">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
+                <div>
+                  <h2 className="text-slate-400 text-sm font-medium mb-1 uppercase tracking-wider">ATS Compatibility Score</h2>
+                  <div className={`text-6xl font-black ${
+                    result.ats_score >= 80 ? 'text-emerald-400' :
+                    result.ats_score >= 60 ? 'text-yellow-400' :
+                    'text-red-400'
+                  }`}>
+                    {result.ats_score}%
+                  </div>
+                </div>
+                <div className={`p-5 rounded-full shadow-inner ${
+                  result.ats_score >= 80 ? 'bg-emerald-500/20 text-emerald-400 shadow-emerald-500/20' :
+                  result.ats_score >= 60 ? 'bg-yellow-500/20 text-yellow-400 shadow-yellow-500/20' :
+                  'bg-red-500/20 text-red-400 shadow-red-500/20'
+                }`}>
+                  <Award className="w-12 h-12" />
+                </div>
+              </div>
+
+              {/* Missing Keywords */}
+              <div>
+                <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5 text-red-400" /> Missing Keywords
+                </h3>
+                <div className="flex flex-wrap gap-2">
+                  {result.missing_keywords && result.missing_keywords.length > 0 ? (
+                    result.missing_keywords.map((keyword, i) => (
+                      <span key={i} className="px-3 py-1.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg text-sm font-medium">
+                        {keyword}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-emerald-400 text-sm">Great job! No major keywords missing.</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Suggestions */}
+              <div>
+                <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                  <CheckCircle className="w-5 h-5 text-emerald-400" /> Suggested Bullet Point Improvements
+                </h3>
+                <div className="space-y-4">
+                  {result.bullet_points_optimization.map((bullet, i) => (
+                    <div key={i} className="p-5 bg-slate-800/30 border-l-4 border-emerald-500/50 rounded-r-xl text-slate-300 text-sm leading-relaxed hover:bg-slate-800/50 transition-colors">
+                      "{bullet}"
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Summary Critique */}
+              <div className="p-6 bg-blue-500/5 border border-blue-500/10 rounded-2xl">
+                 <h4 className="text-blue-400 text-sm font-bold mb-3 uppercase tracking-wide">Professional Summary Feedback</h4>
+                 <p className="text-slate-300 text-sm leading-relaxed">{result.summary_critique}</p>
+              </div>
+
+            </div>
+          )}
+        </motion.div>
+      </div>
+    </div>
+  );
+};
+
+export default ResumeOptimizer;
+</file>
+
+<file path="frontend/src/components/Sidebar.jsx">
+import React from 'react';
+// ✅ FIXED: Single import line with all icons (Briefcase, FileText, User, Settings, MessageSquare, Mail, Video)
+import { Briefcase, FileText, User, Settings, MessageSquare, Mail, Video, Rocket } from 'lucide-react';
+import { Link, useLocation } from 'react-router-dom';
+
+const Sidebar = () => {
+  const location = useLocation();
+
+  const menuItems = [
+    { icon: Rocket, label: 'Autopilot', path: '/autopilot' },
+    { icon: Briefcase, label: 'Job Hunter', path: '/' },
+    { icon: FileText, label: 'Resume Architect', path: '/resume' },
+    { icon: MessageSquare, label: 'Interview Coach', path: '/interview' },
+    { icon: Mail, label: 'Cold Emailer', path: '/email' },
+    { icon: Video, label: 'Video Coach', path: '/video' }, // ✅ Module 5
+    { icon: User, label: 'Profile', path: '/profile' },
+    { icon: Settings, label: 'Settings', path: '/settings' },
+  ];
+
+  return (
+    <div className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col p-6">
+      <div className="flex items-center gap-3 mb-10">
+        <div className="w-8 h-8 bg-gradient-to-tr from-cyan-500 to-blue-600 rounded-lg flex items-center justify-center">
+          <Briefcase className="w-5 h-5 text-white" />
+        </div>
+        <h1 className="text-xl font-bold bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">
+          CareerOS
+        </h1>
+      </div>
+
+      <nav className="flex-1 space-y-2">
+        {menuItems.map((item) => {
+          const isActive = location.pathname === item.path;
+          return (
+            <Link
+              key={item.label}
+              to={item.path}
+              className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group ${
+                isActive
+                  ? 'bg-cyan-500/10 text-cyan-400 shadow-[0_0_20px_rgba(34,211,238,0.1)]'
+                  : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+              }`}
+            >
+              <item.icon className={`w-5 h-5 ${isActive ? 'text-cyan-400' : 'text-slate-500 group-hover:text-white'}`} />
+              <span className="font-medium">{item.label}</span>
+            </Link>
+          );
+        })}
+      </nav>
+    </div>
+  );
+};
+
+export default Sidebar;
+</file>
+
+<file path="README.md">
+# AI-Powered Career Intelligence Platform
+
+An AI-powered career intelligence platform that helps job seekers streamline the job search and interview process through specialized AI agents.
+
+The platform combines **job discovery, resume analysis, interview preparation, recruiter outreach, interview communication analysis, and full-pipeline autopilot orchestration** into a single web application powered by **CrewAI, LangGraph, Groq LLMs, FastAPI, and React**.
+
+---
+
+## Overview
+
+The **AI-Powered Career Intelligence Platform** uses specialized AI agents to automate repetitive career-development workflows.
+
+Instead of relying on a single general-purpose chatbot, the system separates responsibilities across task-specific agents:
+
+* **Job Hunter Agent** - discovers relevant job opportunities using web search, adapting its search strategy (and required skills) to whatever role is searched, not just tech roles.
+* **Resume Optimization Agent** - evaluates a resume against a job description and identifies ATS gaps.
+* **Interview Preparation Agent** - generates role-specific technical and behavioral interview questions.
+* **Cold Email Agent** - generates personalized recruiter outreach emails.
+* **Video Coach Agent** - transcribes mock interview recordings and evaluates communication skills.
+* **Profile Store** - saves a candidate's resume once (keyed by email) so every other module can reuse it instead of re-uploading a PDF each time.
+* **Autopilot Orchestrator (LangGraph)** - chains the job hunter, resume, interview, and email agents into a single automated pipeline, with a real branch: skip straight to matching if a job was already picked in the UI, otherwise search fresh first.
+
+The backend exposes these capabilities through REST APIs, while the React frontend provides an interactive interface for each workflow.
+
+---
+
+## Key Features
+
+### 0. Candidate Profile (Save Once, Reuse Everywhere)
+
+Set an email as your profile ID, upload a PDF resume once (or paste/edit the text directly), and every other module — Resume Optimizer, Interview Coach, Cold Emailer, Autopilot — reuses it by default. A one-click "Upload different" option is still available for a one-off run without touching the saved profile.
+
+Stored in a lightweight SQLite database (`backend/app/career_agent.db`), keyed by email. No login system yet — this is a plain identifier, not authentication.
+
+### 1. AI Job Discovery
+
+Search for relevant job opportunities using natural-language job queries.
+
+The Job Hunter agent:
+
+* Searches the web using Tavily.
+* Identifies relevant job listings.
+* Extracts company, role, location, application link, and summary.
+* Uses the candidate's skills to improve relevance — if no skills are given, the agent infers what's actually relevant to the searched role itself (technical, medical, creative, managerial, etc.) instead of defaulting to a fixed tech skill list.
+
+### 2. Resume Optimization
+
+Upload a PDF resume and provide a target job description.
+
+The Resume Optimization agent:
+
+* Extracts resume text from PDF files.
+* Identifies technical skills and keywords from the job description.
+* Compares the resume against the target role.
+* Generates an ATS-oriented match score.
+* Identifies missing keywords.
+* Suggests optimized resume bullet points.
+* Critiques the professional summary.
+
+### 3. AI Interview Preparation
+
+Generate personalized interview preparation from a resume and job description.
+
+The Interview Coach generates:
+
+* Technical interview questions.
+* Behavioral interview questions.
+* Context explaining why each question is relevant.
+* STAR-based sample answers.
+* Role-specific interview tips.
+
+### 4. Personalized Cold Email Generation
+
+Generate concise recruiter outreach emails based on:
+
+* Candidate resume.
+* Job description.
+* Company.
+* Recruiter or hiring-manager name.
+
+The agent identifies relevant candidate experience and connects it with the requirements of the target role.
+
+### 5. AI Video Interview Coach
+
+Upload a mock interview recording and receive communication feedback.
+
+The workflow:
+
+```text
+Interview Video
+      ↓
+MoviePy
+      ↓
+Audio Extraction
+      ↓
+Groq Whisper
+      ↓
+Transcript
+      ↓
+CrewAI Communication Coach
+      ↓
+Soft-Skill Analysis
+```
+
+The system evaluates:
+
+* Speaking score.
+* Clarity.
+* Communication quality.
+* Filler-word usage.
+* Delivery.
+* Areas for improvement.
+
+### 6. Autopilot (LangGraph Orchestration)
+
+Run the entire pipeline — job match, resume analysis, interview prep, and cold email draft — in a single request instead of clicking through five separate modules.
+
+```text
+                         load_profile
+                              │
+              ┌───────────────┴───────────────┐
+      job already picked?              no job picked yet
+              │                                │
+              ▼                                ▼
+       analyze_resume  ◄──── pick_job ◄──── hunt_jobs
+              │
+              ▼
+        prep_interview
+              │
+              ▼
+         draft_email
+```
+
+If a job was already selected via the Job Hunter's "Prep interview" / "Draft email" buttons, the graph skips straight to `analyze_resume`. Otherwise it searches fresh via `hunt_jobs` → `pick_job` first. Both paths converge on the same downstream stages.
+
+If any stage fails (e.g. a rate limit), that stage records the error and the graph routes straight to an early end instead of continuing — so a failed interview-prep call doesn't immediately fire another LLM call for the email draft into the same rate limit. The response always includes whatever *did* complete, plus a plain-English reason for whatever didn't.
+
+---
+
+## System Architecture
+
+```text
+                         ┌─────────────────────────┐
+                         │      React Frontend      │
+                         │  Vite + Tailwind + Context│
+                         └────────────┬────────────┘
+                                      │ REST API
+                                      ▼
+                         ┌─────────────────────────┐
+                         │      FastAPI Backend     │
+                         │  /api/... routes, 429s   │
+                         └──────┬────────────┬──────┘
+                                │            │
+                                ▼            ▼
+                  ┌──────────────────┐  ┌──────────────────────┐
+                  │  Profile Store    │  │ LangGraph Orchestrator│
+                  │  SQLite, by email │  │ /api/orchestrate/run │
+                  └──────────────────┘  └──────────┬────────────┘
+                                                    │
+                                                    ▼
+                                       ┌─────────────────────────┐
+                                       │      5 Crew Modules      │
+                                       │  hunter · resume · int-  │
+                                       │  erview · email · video  │
+                                       └──────────┬──────┬───────┘
+                                                  │      │
+                                                  ▼      ▼
+                                      ┌────────────────┐ ┌──────────────┐
+                                      │ Groq LLM+Whisper│ │ Tavily Search│
+                                      │ retry + backoff │ │ (job hunter) │
+                                      └────────────────┘ └──────────────┘
+```
+
+The FastAPI backend exposes both the direct, standalone `/api/...` routes (used by the individual frontend pages) *and* the LangGraph orchestrator, which internally calls the same 5 crew modules in sequence rather than duplicating any agent logic. Every crew's `LLM(...)` instance is configured with a timeout and automatic retry/backoff, so a transient Groq rate limit is absorbed silently where possible; anything that still fails comes back as a proper `429` instead of a raw stack trace.
+
+---
+
+## Technology Stack
+
+### Frontend
+
+* **React 19**
+* **Vite**
+* **Tailwind CSS**
+* **Axios**
+* **Framer Motion**
+* **Lucide React**
+* **React Router**
+
+### Backend
+
+* **Python**
+* **FastAPI**
+* **Uvicorn**
+* **Pydantic**
+* **PyPDF2**
+* **MoviePy**
+
+### AI / Agent Framework
+
+* **CrewAI**
+* **LangGraph** — orchestrates the Autopilot pipeline (`backend/graph/`)
+* **Groq**
+* **Llama 3.3 70B** (or your account's current available Groq model — see Troubleshooting)
+* **Whisper Large V3**
+* **litellm** — auto-retry/backoff on rate limits, used underneath CrewAI's `LLM(...)`
+
+### External Services
+
+* **Tavily** — web search and job discovery
+* **Groq API** — LLM inference and speech transcription
+
+### Data Storage
+
+* **SQLite** — the profile store (`backend/app/career_agent.db`), created automatically on first run. Not committed to git.
+* **MongoDB / Motor** — present in the backend's dependencies for future use, but not currently wired into any route (see `app/database.py`, `app/dependencies.py`).
+
+---
+
+## Project Structure
+
+```text
+Career-Agent-OS/
+│
+├── backend/
+│   │
+│   ├── agents/
+│   │   ├── config/
+│   │   │   ├── agents.yaml
+│   │   │   ├── tasks.yaml
+│   │   │   ├── resume_agents.yaml
+│   │   │   └── resume_tasks.yaml
+│   │   │
+│   │   ├── hunter_crew.py
+│   │   ├── resume_crew.py
+│   │   ├── interview_crew.py
+│   │   ├── email_crew.py
+│   │   ├── video_crew.py
+│   │   └── reviewer_crew.py        # scaffold, not currently wired up
+│   │
+│   ├── app/
+│   │   ├── main.py                 # all FastAPI routes
+│   │   ├── utils.py                # parse_agent_output, PDF extraction, rate-limit detection
+│   │   ├── profile_store.py        # SQLite-backed profile CRUD
+│   │   ├── database.py             # MongoDB scaffold, not currently wired up
+│   │   ├── dependencies.py         # scaffold, not currently wired up
+│   │   └── career_agent.db         # auto-created SQLite file (gitignored)
+│   │
+│   ├── graph/
+│   │   ├── state.py                # PipelineState — shared state shape
+│   │   ├── nodes.py                # one node per pipeline stage
+│   │   └── workflows.py            # builds + compiles the StateGraph
+│   │
+│   ├── tools/
+│   │   └── tavily_search.py
+│   │
+│   ├── requirements.txt
+│   └── .env
+│
+├── frontend/
+│   │
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── JobDashboard.jsx
+│   │   │   ├── ResumeOptimizer.jsx
+│   │   │   ├── InterviewPrep.jsx
+│   │   │   ├── ColdEmail.jsx
+│   │   │   ├── VideoCoach.jsx
+│   │   │   ├── Profile.jsx         # upload/edit the saved resume
+│   │   │   ├── AutoPilot.jsx       # triggers /api/orchestrate/run
+│   │   │   └── Sidebar.jsx
+│   │   │
+│   │   ├── context/
+│   │   │   └── AppContext.jsx      # shared email/profile/selectedJob state
+│   │   │
+│   │   ├── App.jsx
+│   │   ├── App.css
+│   │   └── index.css
+│   │
+│   ├── package.json
+│   └── vite.config.js
+│
+└── README.md
+```
+
+---
+
+# Getting Started
+
+## Prerequisites
+
+Make sure the following are installed:
+
+* Python 3.10+
+* Node.js 18+
+* npm
+* Git
+
+For video analysis, MoviePy may also require **FFmpeg** depending on the installed MoviePy environment.
+
+---
+
+## 1. Clone the Repository
+
+```bash
+git clone <your-repository-url>
+cd Career-Agent-OS
+```
+
+---
+
+## 2. Set Up the Backend
+
+Navigate to the backend:
+
+```bash
+cd backend
+```
+
+Create a virtual environment:
+
+### Windows
+
+```powershell
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+```
+
+### macOS / Linux
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+Install the dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## 3. Configure Environment Variables
+
+Create a `.env` file inside the `backend` directory:
+
+```env
+GROQ_API_KEY=your_groq_api_key
+TAVILY_API_KEY=your_tavily_api_key
+MONGO_URL=mongodb://localhost:27017
+```
+
+### Required API Keys
+
+#### Groq
+
+Used for:
+
+* Llama 3.3 70B inference.
+* Whisper speech transcription.
+
+#### Tavily
+
+Used by the Job Hunter agent for web search.
+
+MongoDB is optional for the currently exposed workflows.
+
+---
+
+## 4. Start the Backend
+
+From the `backend` directory:
+
+```bash
+python app/main.py
+```
+
+The FastAPI server will start at:
+
+```text
+http://localhost:8000
+```
+
+FastAPI's interactive API documentation is available at:
+
+```text
+http://localhost:8000/docs
+```
+
+---
+
+## 5. Start the Frontend
+
+Open a second terminal:
+
+```bash
+cd frontend
+```
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Start the development server:
+
+```bash
+npm run dev
+```
+
+The frontend will normally be available at:
+
+```text
+http://localhost:5173
+```
+
+Before using **Resume Optimizer**, **Interview Coach**, **Cold Emailer**, or **Autopilot** without re-uploading a PDF each time, visit `/profile` first, set an email, and upload/save a resume.
+
+---
+
+# API Endpoints
+
+| Endpoint                | Method | Purpose                                          |
+| ------------------------ | ------ | ------------------------------------------------- |
+| `/api/profile/{email}`   | GET    | Fetch a saved profile                            |
+| `/api/profile/upload`    | POST   | Upload/replace a resume PDF, parsed and saved    |
+| `/api/profile`           | PUT    | Save hand-edited resume text                     |
+| `/api/orchestrate/run`   | POST   | Run the full Autopilot pipeline (LangGraph)      |
+| `/api/scrape`            | POST   | Search for relevant jobs                          |
+| `/api/analyze-resume`    | POST   | Analyze resume against a JD                       |
+| `/api/interview-prep`    | POST   | Generate interview preparation                    |
+| `/api/generate-email`    | POST   | Generate recruiter outreach email                 |
+| `/api/analyze-video`     | POST   | Analyze mock interview communication              |
+
+`analyze-resume`, `interview-prep`, and `generate-email` each accept **either** a fresh PDF upload (`file`) **or** a `resume_text` form field pulled from the saved profile — whichever is present is used.
+
+---
+
+## API Workflow
+
+### Candidate Profile
+
+```text
+GET  /api/profile/{email}
+POST /api/profile/upload   (multipart: email, file)
+PUT  /api/profile          (json: email, resume_text)
+```
+
+Every other module that needs a resume can send `resume_text` instead of re-uploading a file, by pulling it from `GET /api/profile/{email}` first.
+
+---
+
+### Autopilot (Full Pipeline)
+
+```text
+POST /api/orchestrate/run
+```
+
+Request:
+
+```json
+{
+  "email": "candidate@example.com",
+  "job_title": "Backend Engineer",
+  "skills": null,
+  "selected_job": null
+}
+```
+
+Provide either `job_title` (search fresh) or `selected_job` (skip straight to matching, e.g. a job picked in Job Hunter). Returns the matched job, resume analysis, interview prep, cold email draft, and a list of any per-stage errors.
+
+---
+
+### Job Discovery
+
+```text
+POST /api/scrape
+```
+
+Request:
+
+```json
+{
+  "email": "candidate@example.com",
+  "query": "Java Backend Developer",
+  "skills": null
+}
+```
+
+`skills` is optional. If omitted, the Job Hunter agent infers what's relevant to the searched role itself instead of using a fixed list. The request is processed by the Job Hunter agent and Tavily web search.
+
+---
+
+### Resume Analysis
+
+```text
+POST /api/analyze-resume
+```
+
+Accepts:
+
+* Resume PDF.
+* Job description.
+
+Returns:
+
+* ATS score.
+* Missing keywords.
+* Summary critique.
+* Optimized bullet points.
+
+---
+
+### Interview Preparation
+
+```text
+POST /api/interview-prep
+```
+
+Accepts:
+
+* Resume PDF.
+* Job description.
+
+Returns:
+
+* Technical questions.
+* Behavioral questions.
+* Sample STAR answers.
+* Interview tips.
+
+---
+
+### Cold Email Generation
+
+```text
+POST /api/generate-email
+```
+
+Accepts:
+
+* Resume PDF.
+* Job description.
+* Company name.
+* Recruiter name.
+
+Returns:
+
+* Subject line.
+* Email body.
+* Explanation of the selected outreach strategy.
+
+---
+
+### Video Analysis
+
+```text
+POST /api/analyze-video
+```
+
+Accepts:
+
+* Interview video.
+
+Returns:
+
+* Communication score.
+* General feedback.
+* Filler-word assessment.
+* Improvement recommendations.
+
+---
+
+# Agent Architecture
+
+Each career workflow is implemented as a specialized CrewAI agent.
+
+```text
+                    Career Intelligence Platform
+                              │
+             ┌────────────────┼────────────────┐
+             │                │                │
+             ▼                ▼                ▼
+        Job Hunter       Resume Optimizer   Interview Coach
+             │                │                │
+          Tavily             Resume + JD      Resume + JD
+             │                │                │
+             └────────────────┼────────────────┘
+                              │
+                              ▼
+                         Groq Llama
+                              │
+             ┌────────────────┼────────────────┐
+             │                │                │
+             ▼                ▼                ▼
+        Cold Email        Video Coach       Recommendations
+```
+
+The agents use structured Pydantic output models where appropriate, allowing the FastAPI layer to return predictable JSON responses to the frontend.
+
+---
+
+# Resume Analysis Pipeline
+
+```text
+Resume PDF
+    │
+    ▼
+PyPDF2
+    │
+    ▼
+Extracted Resume Text
+    │
+    ├───────────────┐
+    │               │
+    ▼               ▼
+Resume Content   Job Description
+    │               │
+    └───────┬───────┘
+            ▼
+    Resume Optimization Agent
+            │
+            ▼
+     ATS / Skill Analysis
+            │
+      ┌─────┼─────┐
+      ▼     ▼     ▼
+    Score  Gaps  Rewrite
+```
+
+---
+
+# Video Analysis Pipeline
+
+```text
+Video Upload
+     │
+     ▼
+MoviePy
+     │
+     ▼
+Audio Extraction
+     │
+     ▼
+Groq Whisper
+     │
+     ▼
+Interview Transcript
+     │
+     ▼
+Communication Coach Agent
+     │
+     ▼
+Structured Feedback
+```
+
+---
+
+# Autopilot Pipeline (LangGraph)
+
+```text
+                          load_profile
+                               │
+               ┌───────────────┴───────────────┐
+        job already picked?              no job picked yet
+               │                                │
+               ▼                                ▼
+        analyze_resume ◄──── pick_job ◄──── hunt_jobs
+               │
+               ▼
+         prep_interview
+               │
+               ▼
+          draft_email
+```
+
+Built and compiled in `backend/graph/workflows.py`. Every node in `backend/graph/nodes.py` wraps an existing crew — no new AI behavior, just chaining the existing steps. If any stage fails, it's recorded in the response's `errors` list and the graph stops there rather than continuing into a stage that would likely fail too (e.g. hitting the same rate limit twice in a row).
+
+---
+
+# Reliability & Rate Limits
+
+Groq occasionally rate-limits requests, and the model available to a given API key can change over time. The project handles this in a few places:
+
+* **Retry with backoff** — every crew's `LLM(...)` is configured with `additional_params={"num_retries": 3}` and a `timeout`, forwarded straight to `litellm`, which auto-retries on 429s before giving up.
+* **A fixed graph edge** — `prep_interview → draft_email` used to be unconditional, so a rate limit on interview prep didn't stop the email draft from immediately hitting the same limit. It's now a conditional edge like every other stage.
+* **Proper HTTP status codes** — `app/utils.py`'s `is_rate_limit_error()` detects rate-limit errors by message content (since Groq/litellm/instructor wrap them in different exception classes) and every route returns `429` with a clear message instead of a raw `500` stack trace.
+* **Spaced-out Autopilot calls** — Autopilot fires up to 4 LLM calls in one request, which alone can trip a per-minute limit. A short delay between stages spreads the calls out.
+* **Model not found ≠ rate limit** — if you see `model_not_found` rather than a rate-limit error, that's a different issue: Groq has deprecated the hardcoded model string. Check `console.groq.com/docs/models` (or list models via the Groq client) for what's currently available on your account, and update the `model="groq/..."` string in the 5 files under `backend/agents/`.
+
+---
+
+# Security & Configuration
+
+API keys should **never be committed to Git**.
+
+The `.env` file should remain local and be included in `.gitignore`.
+
+Example:
+
+```env
+GROQ_API_KEY=...
+TAVILY_API_KEY=...
+MONGO_URL=...
+```
+
+Also gitignore the auto-created SQLite profile database:
+
+```gitignore
+backend/app/career_agent.db
+```
+
+For deployment, configure these values using the hosting platform's environment-variable system rather than committing credentials to the repository.
+
+---
+
+# Development
+
+Run the frontend development server:
+
+```bash
+cd frontend
+npm run dev
+```
+
+Run the backend:
+
+```bash
+cd backend
+python app/main.py
+```
+
+Build the frontend for production:
+
+```bash
+cd frontend
+npm run build
+```
+
+Preview the production frontend build:
+
+```bash
+npm run preview
+```
+
+Run frontend linting:
+
+```bash
+npm run lint
+```
+
+---
+
+# Future Improvements
+
+Done since this section was first written: candidate profiles (SQLite-backed, reused across modules), LangGraph orchestration for the full pipeline, and rate-limit-aware retries/error handling.
+
+Potential extensions still open:
+
+* Persistent user authentication (the current profile is keyed by a plain email string, not a login).
+* Job recommendation ranking based on candidate profiles.
+* Automated job tracking and application history (a run-history log tied to each profile).
+* Resume version management for multiple job roles.
+* LinkedIn/GitHub profile analysis.
+* Interview session history and performance tracking.
+* Retrieval-Augmented Generation — worth adding once a profile holds multiple resumes/cover letters/saved jobs; a single resume already fits in one prompt, so RAG isn't needed yet.
+* Background job processing for long-running AI tasks (Autopilot currently runs synchronously within the request).
+* Automated test coverage (currently none).
+* Containerized deployment using Docker.
+* Production deployment with authentication, rate limiting, and observability.
+
+---
+
+# Disclaimer
+
+AI-generated job recommendations, resume feedback, interview questions, and communication analysis should be treated as assistance rather than authoritative career advice. Job listings and external links may change or become unavailable.
+</file>
+
+<file path="backend/agents/email_crew.py">
+import os
+from typing import List
+from pydantic import BaseModel, Field
+from crewai import Agent, Crew, Process, Task, LLM
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
+
+# --- Output Schema ---
+class ColdEmail(BaseModel):
+    subject_line: str = Field(..., description="A catchy, non-spammy subject line (under 7 words).")
+    email_body: str = Field(..., description="The full email content (under 150 words).")
+    explanation: str = Field(..., description="Why this angle was chosen based on the JD.")
+
+class EmailCrew:
+    """Cold Email Outreach Crew - Manual Setup"""
+
+    def __init__(self):
+        # Using Groq for speed and persuasive writing capabilities
+        self.llm = LLM(
+            model="groq/openai/gpt-oss-120b",
+            api_key=os.getenv("GROQ_API_KEY"),
+            temperature=0.7, # Higher temp for creativity
+            timeout=60,
+            additional_params={"num_retries": 3}
+        )
+
+    def kickoff(self, inputs):
+        # 1. Define Agent
+        copywriter_agent = Agent(
+            role='Expert Career Copywriter',
+            goal='Write high-conversion cold emails that get candidates interviews.',
+            backstory=(
+                "You are a master of 'Direct Response' copywriting. "
+                "You know that recruiters are busy and hate long, generic emails. "
+                "Your goal is to write emails that hook the reader in the first sentence, "
+                "prove value immediately, and end with a low-friction call to action."
+            ),
+            llm=self.llm,
+            verbose=True,
+            allow_delegation=False
+        )
+
+        # 2. Define Task
+        email_task = Task(
+            description=(
+                "1. Analyze the Job Description to find the #1 biggest problem the company needs solved.\n"
+                "2. Scan the Resume to find the single most relevant achievement that solves that problem.\n"
+                "3. Write a Cold Email to {recipient_name} at {company_name}.\n"
+                "   - Constraints: Under 150 words. No fluff. Casual but professional tone.\n"
+                "   - Structure: Hook (acknowledge their need) -> Value (proof I can fix it) -> Ask (chat availability).\n\n"
+                "Job Description:\n{job_description}\n\n"
+                "Resume Text:\n{resume_text}"
+            ),
+            expected_output="A structured JSON with subject line, body, and strategy explanation.",
+            agent=copywriter_agent,
+            output_pydantic=ColdEmail
+        )
+
+        # 3. Create Crew
+        crew = Crew(
+            agents=[copywriter_agent],
+            tasks=[email_task],
+            process=Process.sequential,
+            verbose=True
+        )
+
+        return crew.kickoff(inputs=inputs)
+</file>
+
+<file path="backend/agents/interview_crew.py">
+import os
+from typing import List
+from pydantic import BaseModel, Field
+from crewai import Agent, Crew, Process, Task, LLM
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
+
+# --- Output Schema ---
+class InterviewQuestion(BaseModel):
+    question: str = Field(..., description="The interview question.")
+    context: str = Field(..., description="Why this question is being asked (e.g., 'Based on missing skill X').")
+    sample_answer: str = Field(..., description="A strong, STAR-format answer key.")
+
+class InterviewPrep(BaseModel):
+    technical_questions: List[InterviewQuestion] = Field(..., description="5 technical questions based on the JD.")
+    behavioral_questions: List[InterviewQuestion] = Field(..., description="3 behavioral questions based on resume gaps or culture.")
+    tips: List[str] = Field(..., description="3 specific tips to ace this specific interview.")
+
+class InterviewCrew:
+    """Interview Prep Crew - Manual Setup"""
+
+    def __init__(self):
+        # Using Groq for speed
+        self.llm = LLM(
+            model="groq/openai/gpt-oss-120b",
+            api_key=os.getenv("GROQ_API_KEY"),
+            temperature=0.2,
+            timeout=60,
+            additional_params={"num_retries": 3}
+        )
+
+    def kickoff(self, inputs):
+        # 1. Define Agent
+        coach_agent = Agent(
+            role='Senior Tech Hiring Manager',
+            goal='Prepare the candidate for a specific job interview by generating targeted, high-stakes questions.',
+            backstory=(
+                "You are a strict but helpful hiring manager at a top tech company. "
+                "You analyze job descriptions and resumes to find weak spots. "
+                "You want to test if the candidate truly knows the skills they claim, "
+                "and if they can handle the requirements they lack."
+            ),
+            llm=self.llm,
+            verbose=True,
+            allow_delegation=False
+        )
+
+        # 2. Define Task
+        prep_task = Task(
+            description=(
+                "1. Analyze the provided Job Description (JD) and Candidate Resume.\n"
+                "2. Identify technical skills in the JD that are weak or missing in the Resume.\n"
+                "3. Generate 5 Technical Questions specifically targeting those weak spots.\n"
+                "4. Generate 3 Behavioral Questions based on the role's seniority.\n"
+                "5. Provide a 'model answer' for each using the STAR method.\n\n"
+                "Job Description:\n{job_description}\n\n"
+                "Resume Text:\n{resume_text}"
+            ),
+            expected_output="A structured interview preparation guide with questions and answers.",
+            agent=coach_agent,
+            output_pydantic=InterviewPrep
+        )
+
+        # 3. Create Crew
+        crew = Crew(
+            agents=[coach_agent],
+            tasks=[prep_task],
+            process=Process.sequential,
+            verbose=True
+        )
+
+        return crew.kickoff(inputs=inputs)
+</file>
+
+<file path="backend/agents/resume_crew.py">
+import os
+from typing import List
+from pydantic import BaseModel, Field
+from crewai import Agent, Crew, Process, Task, LLM
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
+
+# --- Output Schema ---
+class ResumeAnalysis(BaseModel):
+    ats_score: int = Field(..., description="A score from 0-100 based on keyword matching.")
+    missing_keywords: List[str] = Field(..., description="List of important keywords found in JD but missing in Resume.")
+    summary_critique: str = Field(..., description="Critique of the professional summary.")
+    bullet_points_optimization: List[str] = Field(..., description="Rewrite 3 resume bullet points to include keywords from the JD.")
+
+class ResumeCrew:
+    """Resume Optimization Crew - Manual Setup"""
+
+    def __init__(self):
+        # 1. Setup LLM
+        self.llm = LLM(
+            model="groq/openai/gpt-oss-120b",
+            api_key=os.getenv("GROQ_API_KEY"),
+            temperature=0,
+            timeout=60,
+            additional_params={"num_retries": 3}
+        )
+
+    def kickoff(self, inputs):
+        # 2. Define Agent Manually
+        ats_agent = Agent(
+            role='Senior ATS Resume Optimizer',
+            goal='Analyze a resume against a job description to calculate an ATS match score.',
+            backstory='You are a former recruiter who knows exactly how Applicant Tracking Systems (ATS) work. You are strict about keyword matching.',
+            llm=self.llm,
+            verbose=True,
+            allow_delegation=False
+        )
+
+        # 3. Define Task Manually
+        analysis_task = Task(
+            description=(
+                "1. Read the provided Resume Text.\n"
+                "2. Read the provided Job Description (JD).\n"
+                "3. Identify every hard skill and tool mentioned in the JD.\n"
+                "4. Check if those skills exist in the Resume Text.\n"
+                "5. Calculate an ATS Score (0-100).\n"
+                "6. Rewrite 3 bullet points to include missing keywords.\n\n"
+                "Resume Text:\n{resume_text}\n\n"
+                "Job Description:\n{job_description}"
+            ),
+            expected_output="A structured analysis containing the score, missing keywords, and rewritten bullet points.",
+            agent=ats_agent,
+            output_pydantic=ResumeAnalysis # Structured Output
+        )
+
+        # 4. Create Crew Manually
+        crew = Crew(
+            agents=[ats_agent],
+            tasks=[analysis_task],
+            process=Process.sequential,
+            verbose=True
+        )
+
+        return crew.kickoff(inputs=inputs)
+</file>
+
+<file path="backend/agents/video_crew.py">
+import os
+from typing import List
+from pydantic import BaseModel, Field
+from crewai import Agent, Crew, Process, Task, LLM
+from groq import Groq
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
+
+# --- Output Schema ---
+class SoftSkillAnalysis(BaseModel):
+    score: int = Field(..., description="Overall soft skill score out of 100.")
+    feedback: str = Field(..., description="General feedback on the delivery.")
+    filler_words_count: str = Field(..., description="Estimate of filler words usage (High/Medium/Low).")
+    improvements: List[str] = Field(..., description="3 specific actionable tips to improve.")
+
+class VideoCrew:
+    """Soft Skill Analysis Crew"""
+
+    def __init__(self):
+        self.api_key = os.getenv("GROQ_API_KEY")
+        self.llm = LLM(
+            model="groq/openai/gpt-oss-120b",
+            api_key=self.api_key,
+            temperature=0.3,
+            timeout=60,
+            additional_params={"num_retries": 3}
+        )
+        self.client = Groq(api_key=self.api_key)
+
+    # def transcribe_audio(self, audio_path):
+    #     """Uses Groq's Whisper model to transcribe audio fast."""
+    #     with open(audio_path, "rb") as file:
+    #         transcription = self.client.audio.transcriptions.create(
+    #             file=(audio_path, file.read()),
+    #             model="distil-whisper-large-v3-en",
+    #             response_format="json",
+    #             language="en",
+    #             temperature=0.0
+    #         )
+    #     return transcription.text
+
+    def transcribe_audio(self, audio_path):
+        """Uses Groq's Whisper model to transcribe audio fast."""
+        with open(audio_path, "rb") as file:
+            transcription = self.client.audio.transcriptions.create(
+                file=(audio_path, file.read()),
+                model="whisper-large-v3",  # <--- UPDATED MODEL NAME
+                response_format="json",
+                language="en",
+                temperature=0.0
+            )
+        return transcription.text
+
+    def kickoff(self, audio_path):
+        # 1. Transcribe first (Not an agent task, just a tool step)
+        print("🎙️ Transcribing audio...")
+        transcript = self.transcribe_audio(audio_path)
+        print(f"📝 Transcript: {transcript[:50]}...")
+
+        # 2. Define Agent
+        coach_agent = Agent(
+            role='Communication Coach',
+            goal='Analyze speech transcripts for soft skills, confidence, and clarity.',
+            backstory=(
+                "You are a speech pathologist and executive communication coach. "
+                "You listen to candidates' answers and evaluate them on clarity, "
+                "conciseness, and confidence. You hate filler words and rambling."
+            ),
+            llm=self.llm,
+            verbose=True,
+            allow_delegation=False
+        )
+
+        # 3. Define Task
+        analysis_task = Task(
+            description=(
+                "Analyze the following interview transcript:\n"
+                f"'{transcript}'\n\n"
+                "Evaluate for:\n"
+                "1. Clarity and Structure (Did they get to the point?)\n"
+                "2. Filler Words (Um, like, you know)\n"
+                "3. Tone (Confident vs. Hesitant)\n"
+                "Provide a score (0-100) and 3 specific improvement tips."
+            ),
+            expected_output="A structured analysis of the candidate's speech.",
+            agent=coach_agent,
+            output_pydantic=SoftSkillAnalysis
+        )
+
+        # 4. Create Crew
+        crew = Crew(
+            agents=[coach_agent],
+            tasks=[analysis_task],
+            process=Process.sequential,
+            verbose=True
+        )
+
+        return crew.kickoff()
+</file>
+
+<file path="backend/tools/tavily_search.py">
+import os
+from dotenv import load_dotenv
+from langchain_community.tools.tavily_search import TavilySearchResults
+
+load_dotenv(override=True)
+
+# Optimized Search Tool for Free Tier LLMs
+tavily_search = TavilySearchResults(
+    max_results=2,
+    search_depth="basic",
+    include_answer=False,          # Don't waste tokens on Tavily's AI summary
+    include_raw_content=False,     # CRITICAL: prevent massive payloads
+    include_images=False,
+)
+</file>
+
+<file path="backend/requirements.txt">
+# Web API
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Environment variables
+python-dotenv   
+
+# AI / Agents
+crewai
+langgraph
+langchain-community
+
+# LLM / Speech
+groq
+litellm
+
+# Web Search
+tavily-python
+
+# PDF processing
+PyPDF2
+
+# Video processing
+moviepy
+
+# Database
+pymongo
+motor
+
+# Data validation
+pydantic
+typing-extensions
+</file>
+
+<file path="frontend/src/App.jsx">
+import React from 'react';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import Sidebar from './components/Sidebar';
+import JobDashboard from './components/JobDashboard';
+import ResumeOptimizer from './components/ResumeOptimizer';
+import InterviewPrep from './components/InterviewPrep'; // <--- Import
+import ColdEmail from './components/ColdEmail';
+import VideoCoach from './components/VideoCoach';
+import Profile from './components/Profile';
+import AutoPilot from './components/Autopilot';
+import { AppProvider } from './context/AppContext';
+
+
+const App = () => {
+  return (
+    <AppProvider>
+      <Router>
+        <div className="flex h-screen bg-slate-950 text-slate-200 font-sans selection:bg-cyan-500/30">
+          <Sidebar />
+          <main className="flex-1 overflow-y-auto">
+            <Routes>
+              <Route path="/" element={<JobDashboard />} />
+              <Route path="/resume" element={<ResumeOptimizer />} />
+              <Route path="/interview" element={<InterviewPrep />} /> {/* <--- New Route */}
+              <Route path="/email" element={<ColdEmail />} />
+              <Route path="/video" element={<VideoCoach />} />
+              <Route path="/profile" element={<Profile />} />
+              <Route path="/autopilot" element={<AutoPilot />} />
+            </Routes>
+          </main>
+        </div>
+      </Router>
+    </AppProvider>
+  );
+};
+
+export default App;
+</file>
+
+<file path="frontend/src/components/JobDashboard.jsx">
+import React, { useState } from 'react';
+import axios from 'axios';
+import { Search, Briefcase, ExternalLink, Loader2, Building, Globe, ArrowRightCircle, CheckCircle2 } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { useApp } from '../context/AppContext';
+import { useNavigate } from 'react-router-dom';
+
+const JobDashboard = () => {
+  const { email, selectedJob, setSelectedJob } = useApp();
+  const navigate = useNavigate();
+  const [query, setQuery] = useState('');
+  const [skills, setSkills] = useState('');
+  const [jobs, setJobs] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [hasSearched, setHasSearched] = useState(false);
+
+  const handleSearch = async () => {
+    if (!query) return;
+
+    setLoading(true);
+    setError('');
+    setJobs([]);
+    setHasSearched(true);
+
+    try {
+      const response = await axios.post('http://localhost:8000/api/scrape', {
+        email: email || 'test@example.com',
+        query,
+        // Optional — if left blank, the backend now asks the AI to figure
+        // out the right skills for whatever role was searched, instead of
+        // always filtering by a hardcoded "React, Python, FastAPI, GenAI" list.
+        skills: skills.trim() ? skills.trim() : null
+      });
+
+      // Handle the data regardless of if it's wrapped or a direct array
+      const data = response.data;
+
+      if (Array.isArray(data)) {
+        setJobs(data);
+      } else if (data.jobs && Array.isArray(data.jobs)) {
+        setJobs(data.jobs); // Handle if backend wraps it in { jobs: [...] }
+      } else {
+        console.warn("Unexpected data format:", data);
+        setJobs([]);
+      }
+
+    } catch (err) {
+      console.error(err);
+      setError('Failed to fetch jobs. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="p-8 max-w-7xl mx-auto min-h-screen">
+      <div className="text-center space-y-4 mb-12">
+        <div className="inline-flex items-center justify-center p-3 bg-cyan-500/10 rounded-2xl mb-4">
+          <Briefcase className="w-8 h-8 text-cyan-400" />
+        </div>
+        <h1 className="text-5xl font-extrabold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
+          Career-Agent
+        </h1>
+        <p className="text-slate-400 text-lg">Module 1: Autonomous Job Hunter</p>
+      </div>
+
+      {/* Search Section */}
+      <div className="bg-slate-900/80 p-8 rounded-3xl border border-slate-800 shadow-2xl backdrop-blur-sm max-w-4xl mx-auto">
+        <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Target Role</label>
+        <div className="flex gap-4">
+          <div className="relative flex-1">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
+            <input
+              type="text"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl py-4 pl-12 pr-4 text-slate-200 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition-all text-lg"
+              placeholder="e.g. Senior Python Developer Remote"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+            />
+          </div>
+          <button
+            onClick={handleSearch}
+            disabled={loading || !query}
+            className={`px-8 rounded-xl font-bold text-lg transition-all flex items-center gap-2 ${
+              loading
+                ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                : 'bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/40 active:scale-95'
+            }`}
+          >
+            {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : 'Find Jobs'}
+          </button>
+        </div>
+
+        <div className="mt-4">
+          <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">
+            Your Skills (optional)
+          </label>
+          <input
+            type="text"
+            className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 px-4 text-slate-200 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition-all text-sm"
+            placeholder="e.g. Patient Care, ICU, CPR Certified — leave blank to let AI decide"
+            value={skills}
+            onChange={(e) => setSkills(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* Results Section */}
+      <div className="mt-12 space-y-6 max-w-4xl mx-auto">
+        {error && (
+          <div className="p-4 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-center">
+            {error}
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 gap-6">
+          {jobs.length > 0 ? (
+            jobs.map((job, index) => (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: index * 0.1 }}
+                key={index}
+                className="group bg-slate-900 border border-slate-800 hover:border-cyan-500/50 rounded-2xl p-6 transition-all hover:shadow-[0_0_30px_rgba(6,182,212,0.1)] relative overflow-hidden"
+              >
+                <div className="flex flex-col md:flex-row justify-between gap-6">
+                  <div className="flex-1 space-y-3">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <h3 className="text-xl font-bold text-slate-100 group-hover:text-cyan-400 transition-colors">
+                          {job.role || job.title}
+                        </h3>
+                        <div className="flex items-center gap-2 text-slate-400 mt-1">
+                          <Building className="w-4 h-4" />
+                          <span className="font-medium">{job.company}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <p className="text-slate-400 text-sm leading-relaxed border-l-2 border-slate-700 pl-4">
+                      {job.summary}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col justify-between shrink-0 gap-2">
+                    <a
+                      href={job.link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-center gap-2 px-6 py-3 bg-slate-800 hover:bg-cyan-500/10 text-cyan-400 hover:text-cyan-300 border border-slate-700 hover:border-cyan-500/50 rounded-xl transition-all font-medium whitespace-nowrap"
+                    >
+                      Apply Now <ExternalLink className="w-4 h-4" />
+                    </a>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { setSelectedJob(job); navigate('/interview'); }}
+                        className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 border border-violet-500/20 transition-all whitespace-nowrap"
+                        title="Send this job into Interview Coach"
+                      >
+                        <ArrowRightCircle className="w-3.5 h-3.5" /> Prep interview
+                      </button>
+                      <button
+                        onClick={() => { setSelectedJob(job); navigate('/email'); }}
+                        className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 border border-orange-500/20 transition-all whitespace-nowrap"
+                        title="Send this job into Cold Emailer"
+                      >
+                        <ArrowRightCircle className="w-3.5 h-3.5" /> Draft email
+                      </button>
+                    </div>
+                    {selectedJob && selectedJob.link === job.link && (
+                      <p className="flex items-center gap-1 text-[11px] text-emerald-400 justify-center">
+                        <CheckCircle2 className="w-3 h-3" /> Selected
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </motion.div>
+            ))
+          ) : (
+            !loading && hasSearched && (
+              <div className="text-center py-20 opacity-50">
+                <Globe className="w-16 h-16 mx-auto mb-4 text-slate-600" />
+                <p className="text-xl text-slate-500">No jobs found.</p>
+                <p className="text-slate-600 text-sm mt-2">Try a broader search term.</p>
+              </div>
+            )
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default JobDashboard;
+</file>
+
+<file path="backend/agents/hunter_crew.py">
+import os
+from crewai import Agent, Crew, Process, Task, LLM
+from crewai.tools import tool
+from tools.tavily_search import tavily_search
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
+
+# --- 1. Define Native CrewAI Tool ---
+@tool("Web Search")
+def web_search(query: str):
+    """
+    Useful for searching job listings online.
+    Input should be a search query string.
+    Returns a list of search results.
+    """
+    results = tavily_search.invoke(query)
+
+    # Aggressively trim results to keep token count low
+    if isinstance(results, list):
+        for r in results:
+            if isinstance(r, dict) and "content" in r and isinstance(r["content"], str):
+                r["content"] = r["content"][:200]
+    return results
+
+class JobHunterCrew:
+    """Job Hunter Crew - Manual Setup (Powered by Groq)"""
+
+    def __init__(self):
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            raise ValueError("GROQ_API_KEY is missing in .env file")
+
+        self.llm = LLM(
+            model="groq/openai/gpt-oss-120b",
+            api_key=api_key,
+            temperature=0,
+            timeout=60,
+            additional_params={"num_retries": 3}
+        )
+
+    async def kickoff(self, inputs):
+        job_title = inputs.get('job_title', '')
+        user_skills = inputs.get('skills')
+
+        if user_skills:
+            skill_list = [s.strip() for s in user_skills.split(",") if s.strip()]
+            trimmed_skills = ", ".join(skill_list[:5])
+            skills_instruction = f"these key skills: {trimmed_skills}"
+        else:
+            skills_instruction = f"skills typical for a '{job_title}' role"
+
+        # 2. Define Agent — keep backstory minimal to save tokens
+        hunter_agent = Agent(
+            role='Job Scout',
+            goal=f"Find 3 relevant {job_title} job listings matching {skills_instruction}.",
+            backstory=(
+                "You find job listings using Web Search. "
+                "ONLY use the Web Search tool provided. "
+                "Do NOT use any other tool. "
+                "If no jobs found, return an empty list."
+            ),
+            tools=[web_search],
+            llm=self.llm,
+            verbose=True,
+            allow_delegation=False,
+            max_iter=3,
+            max_tier=2
+        )
+
+        # 3. Define Task — concise description to cut input tokens
+        search_task = Task(
+            description=(
+                f"Find 3 active '{job_title}' job listings matching {skills_instruction}. "
+                "For each job return company, role, link, and a one-line summary."
+            ),
+            expected_output="A JSON list of objects with keys: company, role, link, summary.",
+            agent=hunter_agent
+        )
+
+        # 4. Create Crew
+        crew = Crew(
+            agents=[hunter_agent],
+            tasks=[search_task],
+            process=Process.sequential,
+            verbose=True
+        )
+
+        return await crew.kickoff_async(inputs=inputs)
+</file>
+
+<file path="backend/app/main.py">
+import sys
+import os
+import uuid
+import uvicorn
+from typing import Optional
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.concurrency import run_in_threadpool
+from pydantic import BaseModel
+import traceback
+from moviepy import VideoFileClip
+
+import crewai.llms.cache as crewai_cache
+crewai_cache.mark_cache_breakpoint = lambda msg: msg
+
+# Add parent directory to path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Import Agents
+from agents.hunter_crew import JobHunterCrew
+from agents.resume_crew import ResumeCrew
+from agents.interview_crew import InterviewCrew
+from agents.email_crew import EmailCrew
+from agents.video_crew import VideoCrew
+from app import profile_store
+from app.utils import parse_agent_output, extract_text_from_pdf, is_rate_limit_error
+from graph.workflows import run_pipeline
+
+
+app = FastAPI(title="Career-Agent.OS API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Task 1: profile store — make sure the `profiles` table exists before any
+# request tries to read/write it.
+profile_store.init_db()
+
+
+# --- HELPER: turn a caught LLM-call exception into the right HTTP error ---
+def raise_for_llm_error(e: Exception):
+    """
+    Every route that calls a crew catches exceptions the same way: log it,
+    then decide whether it was a rate limit (so the user should just wait
+    and retry) or something else (a real 500). Centralized here so all six
+    routes give the same, correct response instead of dumping a raw
+    stack-trace string at the user either way.
+    """
+    traceback.print_exc()
+    if is_rate_limit_error(e):
+        raise HTTPException(
+            status_code=429,
+            detail="Groq's rate limit was hit. Please wait a moment and try again."
+        )
+    raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- HELPER: resolve resume text from either an upload or the saved profile ---
+def resolve_resume_text(file: Optional[UploadFile], content: Optional[bytes], resume_text: Optional[str]) -> str:
+    """
+    Shared by every route that needs resume text (resume analyzer, interview
+    prep, cold email). A module can get the text one of two ways now:
+      1. A freshly uploaded PDF (old behaviour, still supported).
+      2. Text already saved to the user's profile (Task 1) — sent as a plain
+         form field, so the frontend doesn't need to fake a PDF upload just
+         to reuse text it already has.
+    Whichever is present wins; if neither is present, that's a user error.
+    """
+    if file is not None and content:
+        return extract_text_from_pdf(content)
+    if resume_text and resume_text.strip():
+        return resume_text
+    raise HTTPException(
+        status_code=400,
+        detail="No resume provided. Upload a PDF or save a resume to your profile first."
+    )
+
+
+# --- Profile Store (Task 1) ---
+class ProfileTextUpdate(BaseModel):
+    email: str
+    resume_text: str
+
+
+@app.get("/api/profile/{email}")
+async def get_profile(email: str):
+    profile = await run_in_threadpool(profile_store.get_profile, email)
+    if not profile:
+        raise HTTPException(status_code=404, detail="No profile found for this email yet.")
+    return profile
+
+
+@app.post("/api/profile/upload")
+async def upload_profile_resume(
+        email: str = Form(...),
+        file: UploadFile = File(...)
+):
+    """Upload (or replace) the PDF resume attached to a profile."""
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+
+    content = await file.read()
+    resume_text = extract_text_from_pdf(content)
+
+    profile = await run_in_threadpool(
+        profile_store.upsert_profile, email, resume_text, file.filename
+    )
+    return profile
+
+
+@app.put("/api/profile")
+async def update_profile_text(payload: ProfileTextUpdate):
+    """Save hand-edited resume text without re-uploading a PDF."""
+    profile = await run_in_threadpool(
+        profile_store.upsert_profile, payload.email, payload.resume_text, None
+    )
+    return profile
+
+
+# --- MODULE 0: Autopilot Pipeline (LangGraph) ---
+class PipelineRequest(BaseModel):
+    email: str
+    # Provide job_title for a fresh search, OR selected_job to skip
+    # straight to matching against a job already picked in Job Hunter
+    # (Task 2's job context bridge).
+    job_title: Optional[str] = None
+    skills: Optional[str] = None
+    selected_job: Optional[dict] = None
+
+
+@app.post("/api/orchestrate/run")
+async def run_orchestration(request: PipelineRequest):
+    """
+    Runs the full autopilot pipeline: profile -> job search/match ->
+    resume analysis -> interview prep -> cold email draft, in one call.
+    """
+    if not request.job_title and not request.selected_job:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide either a job_title to search, or a selected_job to match against."
+        )
+
+    print(f"🛰️ [AUTOPILOT] Running pipeline for {request.email}")
+    try:
+        final_state = await run_pipeline(request.model_dump())
+    except Exception as e:
+        print(f"❌ [AUTOPILOT ERROR]:")
+        raise_for_llm_error(e)
+    print(f"🛰️ [AUTOPILOT] Finished. Errors: {final_state.get('errors') or 'none'}")
+
+    return {
+        "jobs": final_state.get("jobs", []),
+        "selected_job": final_state.get("selected_job"),
+        "resume_analysis": final_state.get("resume_analysis"),
+        "interview_prep": final_state.get("interview_prep"),
+        "cold_email": final_state.get("cold_email"),
+        "errors": final_state.get("errors", []),
+    }
+
+
+# --- MODULE 1: Job Scraper ---
+class ScraperRequest(BaseModel):
+    email: str
+    query: str
+    # Optional: if the user tells us their skills, we use them to narrow the
+    # search. If they don't, the agent figures out the right skills for the
+    # role itself instead of a fixed, hardcoded list.
+    skills: Optional[str] = None
+
+
+@app.post("/api/scrape")
+async def trigger_job_scraper(request: ScraperRequest):
+    print(f"📥 [JOB HUNTER] Received scrape request for: {request.email}")
+    try:
+        crew = JobHunterCrew()
+        inputs = {
+            'job_title': request.query,
+            'skills': request.skills.strip() if request.skills and request.skills.strip() else None
+        }
+
+        print(f"🚀 [JOB HUNTER] Kicking off for role: {request.query}...")
+        result = await crew.kickoff(inputs=inputs)
+
+        # --- CLEANUP STEP ---
+        final_data = parse_agent_output(result)
+        print(f"✅ [JOB HUNTER] Returning clean data: {type(final_data)}")
+        return final_data
+
+    except Exception as e:
+        print(f"❌ [JOB HUNTER ERROR]: {e}")
+        raise_for_llm_error(e)
+
+
+# --- MODULE 2: Resume Analyzer ---
+@app.post("/api/analyze-resume")
+async def analyze_resume(
+        file: UploadFile = File(None),
+        job_description: str = Form(...),
+        resume_text: str = Form(None)
+):
+    print(f"📥 [RESUME ANALYZER] Request Received. File: {file.filename if file else 'none (using profile text)'}")
+
+    try:
+        content = None
+        if file is not None:
+            if file.content_type != "application/pdf":
+                raise HTTPException(status_code=400, detail="Only PDF files are supported")
+            content = await file.read()
+
+        resolved_text = resolve_resume_text(file, content, resume_text)
+
+        print(f"✅ [RESUME ANALYZER] Text ready: {len(resolved_text)} chars")
+
+        resume_crew = ResumeCrew()
+        inputs = {
+            'resume_text': resolved_text,
+            'job_description': job_description
+        }
+
+        print(f"🚀 [RESUME ANALYZER] Kicking off Agent...")
+        # resume_crew.kickoff() is a SYNCHRONOUS, blocking call (it waits on
+        # network calls to the LLM). Running it directly inside an `async def`
+        # route freezes the entire server for every other user until it
+        # finishes. run_in_threadpool moves it to a worker thread so other
+        # requests can still be handled concurrently.
+        result = await run_in_threadpool(resume_crew.kickoff, inputs=inputs)
+
+        # Use the same cleanup helper
+        return parse_agent_output(result)
+
+    except Exception as e:
+        print(f"❌ [RESUME ANALYZER ERROR]:")
+        raise_for_llm_error(e)
+
+
+# --- MODULE 3: Interview Prep ---
+@app.post("/api/interview-prep")
+async def interview_prep(
+        file: UploadFile = File(None),
+        job_description: str = Form(...),
+        resume_text: str = Form(None)
+):
+    print(f"📥 [INTERVIEW COACH] Request Received. File: {file.filename if file else 'none (using profile text)'}")
+
+    try:
+        content = None
+        if file is not None:
+            if file.content_type != "application/pdf":
+                raise HTTPException(status_code=400, detail="Only PDF files are supported")
+            content = await file.read()
+
+        resolved_text = resolve_resume_text(file, content, resume_text)
+
+        print(f"✅ [INTERVIEW COACH] Text ready. Generating questions...")
+
+        # B. Run Agent
+        interview_crew = InterviewCrew()
+        inputs = {
+            'resume_text': resolved_text,
+            'job_description': job_description
+        }
+
+        # Same fix as above: don't block the event loop with a sync call.
+        result = await run_in_threadpool(interview_crew.kickoff, inputs=inputs)
+
+        # C. Return Data (using our helper)
+        return parse_agent_output(result)
+
+    except Exception as e:
+        print(f"❌ [INTERVIEW COACH ERROR]:")
+        raise_for_llm_error(e)
+
+
+# --- MODULE 4: Cold Email Generator ---
+@app.post("/api/generate-email")
+async def generate_email(
+        file: UploadFile = File(None),
+        job_description: str = Form(...),
+        company: str = Form(...),
+        recipient: str = Form(...),
+        resume_text: str = Form(None)
+):
+    print(f"📥 [EMAIL AGENT] Request Received for company: {company}")
+
+    try:
+        content = None
+        if file is not None:
+            if file.content_type != "application/pdf":
+                raise HTTPException(status_code=400, detail="Only PDF files are supported")
+            content = await file.read()
+
+        resolved_text = resolve_resume_text(file, content, resume_text)
+
+        print(f"✅ [EMAIL AGENT] Text ready. Writing email...")
+
+        # B. Run Agent
+        email_crew = EmailCrew()
+        inputs = {
+            'resume_text': resolved_text,
+            'job_description': job_description,
+            'company_name': company,
+            'recipient_name': recipient
+        }
+
+        # Same fix as above: don't block the event loop with a sync call.
+        result = await run_in_threadpool(email_crew.kickoff, inputs=inputs)
+
+        # C. Return Clean Data
+        return parse_agent_output(result)
+
+    except Exception as e:
+        print(f"❌ [EMAIL AGENT ERROR]:")
+        raise_for_llm_error(e)
+
+
+# --- MODULE 5: Video Soft Skills Coach ---
+def _extract_audio_sync(temp_video: str, temp_audio: str):
+    """Blocking moviepy work, run off the event loop via run_in_threadpool."""
+    video = VideoFileClip(temp_video)
+    try:
+        video.audio.write_audiofile(temp_audio, logger=None)
+    finally:
+        # Always close, even if writing the audio track fails, otherwise the
+        # file handle stays open and os.remove() below can fail (especially
+        # on Windows) leaving orphaned temp files on disk.
+        video.close()
+
+
+@app.post("/api/analyze-video")
+async def analyze_video(file: UploadFile = File(...)):
+    print(f"📥 [VIDEO COACH] Request Received. File: {file.filename}")
+
+    # Use a random id instead of the raw filename: an uploaded filename like
+    # "../../etc/passwd.mp4" would otherwise let a request write outside the
+    # working directory (path traversal), and it also avoids collisions
+    # between two users uploading a file with the same name at once.
+    unique_id = uuid.uuid4().hex
+    ext = os.path.splitext(file.filename or "")[1] or ".mp4"
+    temp_video = f"temp_{unique_id}{ext}"
+    temp_audio = f"temp_{unique_id}.mp3"
+
+    try:
+        # 1. Save Video Locally.
+        # file.read() is the async-friendly way to pull the upload into
+        # memory; the actual disk write is blocking I/O so it's offloaded
+        # to a worker thread too, keeping the event loop free.
+        content = await file.read()
+
+        def _save_video():
+            with open(temp_video, "wb") as buffer:
+                buffer.write(content)
+
+        await run_in_threadpool(_save_video)
+
+        # 2. Extract Audio using MoviePy (blocking CPU/IO work -> threadpool)
+        print("🎬 Extracting audio...")
+        await run_in_threadpool(_extract_audio_sync, temp_video, temp_audio)
+
+        # 3. Run Agent
+        print("🚀 [VIDEO COACH] Kicking off Agent...")
+        video_crew = VideoCrew()
+        # Note: kickoff now takes the audio path, not a dict of inputs.
+        # video_crew.kickoff() is also a blocking call (transcription + LLM),
+        # so it goes through run_in_threadpool as well.
+        result = await run_in_threadpool(video_crew.kickoff, audio_path=temp_audio)
+
+        return parse_agent_output(result)
+
+    except Exception as e:
+        print(f"❌ [VIDEO COACH ERROR]:")
+        raise_for_llm_error(e)
+
+    finally:
+        # Cleanup always runs, on both success and failure.
+        if os.path.exists(temp_video): os.remove(temp_video)
+        if os.path.exists(temp_audio): os.remove(temp_audio)
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+</file>
+
+</files>

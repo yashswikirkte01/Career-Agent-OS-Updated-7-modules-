@@ -24,7 +24,7 @@ class VideoCrew:
             api_key=self.api_key,
             temperature=0.3,
             timeout=60,
-            additional_params={"num_retries": 3}
+            # additional_params={"num_retries": 3}
         )
         self.client = Groq(api_key=self.api_key)
 

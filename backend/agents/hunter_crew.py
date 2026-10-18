@@ -36,7 +36,7 @@ class JobHunterCrew:
             api_key=api_key,
             temperature=0,
             timeout=60,
-            additional_params={"num_retries": 3}
+            # additional_params={"num_retries": 3}
         )
 
     async def kickoff(self, inputs):

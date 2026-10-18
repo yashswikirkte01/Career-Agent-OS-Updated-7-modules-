@@ -1,3 +1,41 @@
+# import sys
+# import os
+# import uuid
+# import uvicorn
+# from typing import Optional
+# from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+# from fastapi.middleware.cors import CORSMiddleware
+# from fastapi.concurrency import run_in_threadpool
+# from pydantic import BaseModel
+# import traceback
+# from moviepy import VideoFileClip
+#
+# # Add these imports at the top of backend/app/main.py
+# from tools.github_fetcher import fetch_github_repo_context
+# from agents.repo_analyzer_crew import RepoAnalyzerCrew
+#
+#
+# # Add this import at the top of backend/app/main.py
+# from agents.devops_crew import DevOpsCrew
+#
+# import crewai.llms.cache as crewai_cache
+# crewai_cache.mark_cache_breakpoint = lambda msg: msg
+#
+# # Add parent directory to path
+# sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+#
+# # Import Agents
+# from agents.hunter_crew import JobHunterCrew
+# from agents.resume_crew import ResumeCrew
+# from agents.interview_crew import InterviewCrew
+# from agents.email_crew import EmailCrew
+# from agents.video_crew import VideoCrew
+# from app import profile_store
+# from app.utils import parse_agent_output, extract_text_from_pdf, is_rate_limit_error
+# from graph.workflows import run_pipeline
+
+
+
 import sys
 import os
 import uuid
@@ -10,13 +48,18 @@ from pydantic import BaseModel
 import traceback
 from moviepy import VideoFileClip
 
-import crewai.llms.cache as crewai_cache
-crewai_cache.mark_cache_breakpoint = lambda msg: msg
+# import crewai.llms.cache as crewai_cache
+# crewai_cache.mark_cache_breakpoint = lambda msg: msg
 
-# Add parent directory to path
+# Add parent directory to path so Python can find 'tools', 'agents', etc.
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Import Agents
+# --- NEW IMPORTS (Must be below sys.path.append) ---
+from tools.github_fetcher import fetch_github_repo_context
+from agents.repo_analyzer_crew import RepoAnalyzerCrew
+from agents.devops_crew import DevOpsCrew
+
+# --- EXISTING IMPORTS ---
 from agents.hunter_crew import JobHunterCrew
 from agents.resume_crew import ResumeCrew
 from agents.interview_crew import InterviewCrew
@@ -25,6 +68,7 @@ from agents.video_crew import VideoCrew
 from app import profile_store
 from app.utils import parse_agent_output, extract_text_from_pdf, is_rate_limit_error
 from graph.workflows import run_pipeline
+
 
 
 app = FastAPI(title="Career-Agent.OS API")
@@ -380,6 +424,74 @@ async def analyze_video(file: UploadFile = File(...)):
         if os.path.exists(temp_video): os.remove(temp_video)
         if os.path.exists(temp_audio): os.remove(temp_audio)
 
+
+# --- MODULE 6: GitHub Repo Analyzer ---
+class RepoAnalyzeRequest(BaseModel):
+    username: str
+    repo: str
+    job_description: Optional[str] = None
+
+
+@app.post("/api/analyze-repo")
+async def analyze_repo(request: RepoAnalyzeRequest):
+    print(f"📥 [REPO ANALYZER] Fetching repo: {request.username}/{request.repo}")
+
+    try:
+        # 1. Fetch context from GitHub (Read-only)
+        repo_context = await fetch_github_repo_context(request.username, request.repo)
+        print(f"✅ [REPO ANALYZER] Fetched {len(repo_context['tree'])} files in tree.")
+
+        # 2. Setup inputs
+        inputs = {
+            # Limit tree string length to avoid massive payloads for huge repos
+            "repo_tree": str(repo_context["tree"][:200]),
+            "file_contents": str(repo_context["file_contents"]),
+            "job_description": request.job_description or "No target job description provided. Provide general portfolio feedback."
+        }
+
+        # 3. Run Agent
+        print(f"🚀 [REPO ANALYZER] Kicking off Auditor Agent...")
+        analyzer_crew = RepoAnalyzerCrew()
+        result = await run_in_threadpool(analyzer_crew.kickoff, inputs=inputs)
+
+        return parse_agent_output(result)
+
+    except Exception as e:
+        print(f"❌ [REPO ANALYZER ERROR]:")
+        raise_for_llm_error(e)
+
+
+# --- MODULE 7: DevOps Generator ---
+class DevOpsGenerateRequest(BaseModel):
+    username: str
+    repo: str
+
+
+@app.post("/api/generate-devops")
+async def generate_devops(request: DevOpsGenerateRequest):
+    print(f"📥 [DEVOPS GENERATOR] Fetching repo: {request.username}/{request.repo}")
+
+    try:
+        # 1. Fetch context from GitHub (Read-only)
+        repo_context = await fetch_github_repo_context(request.username, request.repo)
+        print(f"✅ [DEVOPS GENERATOR] Fetched context. Passing to Architect Agent...")
+
+        # 2. Setup inputs
+        inputs = {
+            "repo_tree": str(repo_context["tree"][:200]),
+            "file_contents": str(repo_context["file_contents"])
+        }
+
+        # 3. Run Agent
+        devops_crew = DevOpsCrew()
+        result = await run_in_threadpool(devops_crew.kickoff, inputs=inputs)
+
+        # 4. Return Data
+        return parse_agent_output(result)
+
+    except Exception as e:
+        print(f"❌ [DEVOPS GENERATOR ERROR]:")
+        raise_for_llm_error(e)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
